@@ -1799,7 +1799,14 @@ function prioBadgeClass(p){
   return "";
 }
 
-function dueBadgeState(dueStr){
+function dueBadgeState(dueStr, statusStr){
+  const s = String(statusStr || "").toLowerCase();
+
+  // If it's finished, don't show "Overdue"
+  if (s && /completed|done|uploaded|published|posted|archived|upload & lms integration/.test(s)) {
+    return { cls: "ok", label: "Completed" };
+  }
+
   if (!dueStr) return { cls:"", label:"No date" };
   const d = parseDateFlexible(dueStr);
   if (isNaN(d)) return { cls:"", label:"—" };
@@ -2355,8 +2362,8 @@ function renderRequestsBoard(){
     const list = document.createElement("div");
     groups.get(b.key).forEach((r)=>{
       const ridx = all.indexOf(r);
-      const due = dueBadgeState(r.DueDate);
-      const prioCls = prioBadgeClass(r.Priority);
+const due = dueBadgeState(r.DueDate, r.Status);
+const prioCls = prioBadgeClass(r.Priority);
 
       const card = document.createElement("div");
       card.className = "req-card";
@@ -2367,14 +2374,16 @@ function renderRequestsBoard(){
       card.appendChild(title);
 
       const meta = document.createElement("div");
-      meta.className = "req-meta";
-      meta.innerHTML = `
-        <span class="req-badge ${due.cls}">${due.label}</span>
-        ${r.Priority ? `<span class="req-badge ${prioCls}">${r.Priority}</span>` : ""}
-        ${r.Owner ? `<span>👤 ${r.Owner}</span>` : ""}
-        ${r.DueDate ? `<span>🗓 ${fmtDate(r.DueDate)}</span>` : ""}
-      `;
-      card.appendChild(meta);
+meta.className = "req-meta";
+meta.innerHTML = `
+  <span class="req-badge ${due.cls}">${due.label}</span>
+  ${r.Priority && !/completed|done|archived/i.test(r.Status || "") 
+      ? `<span class="req-badge ${prioCls}">${r.Priority}</span>` 
+      : ""}
+  ${r.Owner ? `<span>👤 ${r.Owner}</span>` : ""}
+  ${r.DueDate ? `<span>🗓 ${fmtDate(r.DueDate)}</span>` : ""}
+`;
+card.appendChild(meta);
 
       const actions = document.createElement("div");
       actions.className = "req-actions";
@@ -2470,8 +2479,8 @@ function renderPodcastBoard() {
       const guest  = r.Guest  || "";
       const notes  = r.Notes  || "";
       const status = r.Status || "";
-      const badge  = dueBadgeState(r.Planned);
-      const plannedLabel = r.Planned ? fmtDate(r.Planned) : "No date";
+const badge  = dueBadgeState(r.Planned, status);
+const plannedLabel = r.Planned ? fmtDate(r.Planned) : "No date";
 const lessonTitle   = r.LessonTitle || "(Untitled lesson)";
       const moduleName    = r.ModuleName  || "";
       const trainingType  = r.TrainingType || "";
@@ -2633,10 +2642,10 @@ function renderTrainingBoard() {
     title = trainingType || "(Training)";
   }
 
-  const status       = String(r.Status || "");
-  const plannedRaw   = r.Planned || r.DueDate || "";
-  const plannedBadge = dueBadgeState(plannedRaw);
-  const plannedLabel = plannedRaw ? fmtDate(plannedRaw) : "";
+const status       = String(r.Status || "");
+const plannedRaw   = r.Planned || r.DueDate || "";
+const plannedBadge = dueBadgeState(plannedRaw, status);
+const plannedLabel = plannedRaw ? fmtDate(plannedRaw) : "";
 
   const card = document.createElement("div");
   card.className = "req-card";
@@ -2794,8 +2803,8 @@ function renderYouTubeBoard() {
       const title = r.Title || "(Untitled video)";
       const notes = r.Notes || "";
       const status = r.Status || "";
-      const badge  = dueBadgeState(r.Planned);
-      const plannedLabel = r.Planned ? fmtDate(r.Planned) : "No date";
+const badge  = dueBadgeState(r.Planned, status);
+const plannedLabel = r.Planned ? fmtDate(r.Planned) : "No date";
       const thumb  = r.Thumbnail || "";
       const link   = r.Link || "";
 
@@ -2950,21 +2959,26 @@ function renderLinkedInBoard() {
       const ridx = all.indexOf(r);
 
       const card = document.createElement("div");
-      card.className = "req-card"; // reuse card styling
+card.className = "req-card"; // reuse card styling
 
-      const title = document.createElement("div");
-      title.className = "req-title";
-      title.textContent = r.Title || "(Post)";
-      card.appendChild(title);
+const title = document.createElement("div");
+title.className = "req-title";
+title.textContent = r.Title || "(Post)";
+card.appendChild(title);
 
-      const meta = document.createElement("div");
-      meta.className = "req-meta";
-      meta.innerHTML = `
-        ${r.Type   ? `<span>${r.Type}</span>` : ""}
-        ${r.Planned ? `<span>🗓 ${fmtDate(r.Planned)}</span>` : ""}
-        ${r.Link   ? `<a href="${r.Link}" target="_blank" rel="noopener">🔗 Link</a>` : ""}
-      `;
-      card.appendChild(meta);
+const status = String(r.Status || "");
+const badge  = dueBadgeState(r.Planned, status);
+const plannedLabel = r.Planned ? fmtDate(r.Planned) : "No date";
+
+const meta = document.createElement("div");
+meta.className = "req-meta";
+meta.innerHTML = `
+  <span class="req-badge ${badge.cls}">${badge.label}</span>
+  ${r.Type   ? `<span>${r.Type}</span>` : ""}
+  ${r.Planned ? `<span>🗓 ${plannedLabel}</span>` : ""}
+  ${r.Link   ? `<a href="${r.Link}" target="_blank" rel="noopener">🔗 Link</a>` : ""}
+`;
+card.appendChild(meta);
 
       const actions = document.createElement("div");
       actions.className = "req-actions";
