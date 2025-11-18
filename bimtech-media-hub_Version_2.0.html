@@ -1,0 +1,5032 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<!--
+  BIMTech Media Hub
+  =================
+  Single-page content ops dashboard for:
+    - Podcast
+    - YouTube
+    - LinkedIn
+    - Drone Ops
+    - Matt’s Requests
+    - Training
+    - Ideas
+    - Calendar (modal)
+    - Analytics (modal)
+
+  Data source:
+    - Google Apps Script endpoint (multi-sheet):
+      https://script.google.com/macros/s/AKfycbxRldtbPS0k7P-1ROaure6SbTB5Il23SmoYRCvffJWZo1hhSELe30e_9lzhpEU3hvmxGQ/exec
+
+  Sheets expected in the connected Google Sheet:
+    - "Podcast"       (Title, Guest, Status, Planned, Notes, LastEditedBy)
+    - "YouTube"       (Title, Site, FlightType, Pilot, Category, Subcategory, DroneModel, DroneClass, MTOMkg, FRZRequired, FRZPermission, LandownerPermission, RiskLevel, OpsType, MaxAltitudem, Status, Planned, DocsLink, Notes, LastEditedBy)
+    - "LinkedIn"      (Title, Type, Status, Planned, Link, Notes, LastEditedBy)
+    - "MattsRequests" (Request, Priority, Status, Owner, DueDate, Notes, LastEditedBy)
+    - "Training"      (Module, VideoTitle, Owner, Status, Progress, Notes, LastEditedBy)
+    - "Ideas"         (Idea, Category, Author, Created, Notes)
+    - "Drone"         (Title, Site, FlightType, Pilot, Status, Planned, DocsLink, Notes, LastEditedBy)
+
+  Main UI structure:
+    - Header: status pill, Refresh, Calendar (📅 modal), Analytics (📊 modal), Settings (⚙)
+    - Tabs row:
+        * Dashboard
+        * Planner         -> Podcast / YouTube / LinkedIn planners
+        * Drone           -> Drone operations planner
+        * Matt’s Requests -> Table with priority + filters
+        * Training
+        * Ideas
+    - Calendar + Analytics are NOT tabs; opened via header icons in modal overlays.
+
+  Visual polish:
+    - Global fade-in on initial load (body transitions from 0 → 1 opacity)
+    - Skeleton loaders for:
+        * Podcast dashboard card
+        * YouTube dashboard card
+        * Mini calendar (dashboard)
+        * Summary stats
+        * Ideas preview
+        * Logo/avatar (soft pulsing placeholder)
+    - Skeletons are hidden once feeds & planners load; real content fades in.
+
+  Where to tweak:
+    - Colours / theme  : Tailwind config + CSS near top
+    - Sheets / columns : SCHEMA const in JS
+    - Training status→progress mapping: TRAINING_PROGRESS const
+    - Today Focus logic: renderTodayFocus()
+    - Matt’s quick filters: mattsFilter + renderGrid("MattsRequests")
+    - Skeletons: look for elements with ids:
+        * podcastSkeleton, ytSkeleton, miniCalSkeleton
+        * summarySkeleton, ideasPreviewSkeleton
+    - Global fade-in: body + body.app-ready in the CSS and init() in JS
+
+  To move to a new Apps Script:
+    - Change CFG.scriptUrl default below
+    - Or override via Settings in the UI (stored in localStorage)
+-->
+
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>BIMTech Media Hub</title>
+
+<!-- Tailwind (CDN) -->
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  darkMode: "class",
+  theme: { extend: {
+    colors: {
+      bg:"#0B0F12", panel:"#11161B", border:"#1E2A33",
+      accent:"#1193b8", text:"#E6F2EA", dim:"#9BB4A1"
+    }
+  } }
+}
+</script>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+<style>
+  :root { color-scheme: dark; --dash-h: 420px; }
+
+  /* Global fade-in */
+  body {
+    background:#0B0F12;
+    color:#E6F2EA;
+    font-family: system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity .45s ease, transform .45s ease;
+  }
+  body.app-ready {
+  opacity: 1;
+  transform: none; /* <- key bit */
+}
+
+  .card { background:#11161B; border:1px solid #1E2A33; border-radius:0.75rem }
+  .btn { border-radius:0.5rem; padding:0.5rem 0.75rem; font-weight:600; transition: box-shadow .15s, transform .1s, background-color .15s, border-color .15s, color .15s }
+  .btn-primary { background:#1193b8; color:white }
+  .btn-outline { border:1px solid #1E2A33; color:#E6F2EA; background:transparent }
+  .btn-primary:hover { box-shadow: 0 0 0 3px rgba(17,147,184,.25), 0 8px 20px rgba(17,147,184,.25); transform: translateY(-1px) }
+  .btn-outline:hover { box-shadow: 0 0 0 3px rgba(30,42,51,.6), 0 6px 16px rgba(0,0,0,.35); transform: translateY(-1px) }
+  .btn:active { transform: translateY(0); box-shadow:none }
+  .badge { background:#1193b8; color:#fff; font-size:.75rem; padding:.25rem .5rem; border-radius:.5rem }
+  .grid3 { display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap:1rem }
+  @media (max-width: 1200px) { .grid3 { grid-template-columns: repeat(2, minmax(0,1fr)) } }
+  @media (max-width: 800px)  { .grid3 { grid-template-columns: 1fr } }
+  .text-dim { color:#9BB4A1 }
+  .line-clamp-3 { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden }
+
+  /* Tabs */
+  .tabTrigger {
+    cursor:pointer;
+    transition: background-color .15s, color .15s, border-color .15s;
+    background:transparent;
+    color:#9BB4A1;
+    font-size:0.8rem;
+  }
+  .tabTrigger:hover { background:rgba(17,147,184,.15); color:#E6F2EA }
+  .tabTrigger.active { background:#1193b8; color:#fff; border-color:#1193b8 !important }
+
+  /* Inputs */
+  select, input, textarea { background-color:#0F151A; color:#E6F2EA; border:1px solid #1E2A33; border-radius:.5rem }
+  select:focus, input:focus, textarea:focus { outline:none; border-color:#1193b8; box-shadow:0 0 0 2px rgba(17,147,184,.25) }
+  select option { background-color:#0F151A; color:#E6F2EA }
+  ::placeholder { color:#7FA28A }
+
+  table { width:100%; border-collapse: collapse }
+  th, td { padding: .6rem .5rem; border-bottom: 1px solid #1E2A33 }
+  th { text-align:left; font-weight:600; color:#9BB4A1 }
+  tr:hover td { background: rgba(255,255,255,0.02) }
+
+  /* Priority tints for Matt's Requests */
+  .row-prio-high td { background: rgba(248,113,113,.04); }
+  .row-prio-high:hover td { background: rgba(248,113,113,.08); }
+  .row-prio-med td  { background: rgba(245,158,11,.04); }
+  .row-prio-med:hover td  { background: rgba(245,158,11,.08); }
+  .row-prio-low td  { background: rgba(148,163,184,.03); }
+  .row-prio-low:hover td  { background: rgba(148,163,184,.06); }
+
+  /* Overdue row highlight */
+  .row-overdue td { background: rgba(248,113,113,.06); }
+  .row-overdue:hover td { background: rgba(248,113,113,.10); }
+
+  /* Drone risk highlighting (UK rules) */
+  .row-drone-warning td {
+    background: rgba(250,204,21,.04);
+  }
+  .row-drone-warning:hover td {
+    background: rgba(250,204,21,.08);
+  }
+  .row-drone-highrisk td {
+    background: rgba(248,113,113,.08);
+  }
+  .row-drone-highrisk:hover td {
+    background: rgba(248,113,113,.12);
+  }
+
+  /* Calendar */
+  .calCell { min-height: 110px; border:1px solid #1E2A33; border-radius:.5rem; padding:.5rem; background:#0F151A }
+  .calCell .day { font-size:.8rem; color:#9BB4A1; margin-bottom:.25rem }
+  .calItem { font-size:.75rem; margin:.2rem 0; padding:.15rem .35rem; border-radius:.35rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; border:1px solid #1E2A33 }
+  .calItem.podcast  { background: rgba(17,147,184,.18);  border-color:#1193b8; color:#c9f1fb; }
+  .calItem.youtube  { background: rgba(244,114,182,.16); border-color:#f472b6; color:#ffd9eb; }
+  .calItem.linkedin { background: rgba(59,130,246,.16);  border-color:#3b82f6; color:#dbeafe; }
+  .calItem.training { background: rgba(34,197,94,.16);   border-color:#22c55e; color:#dcfce7; }
+  .calItem.request  { background: rgba(250,204,21,.16);  border-color:#facc15; color:#fef3c7; }
+  .calItem.drone    { background: rgba(168,85,247,.16);  border-color:#a855f7; color:#f5e9ff; }
+  .calToday { outline:2px solid #1193b8; outline-offset: -2px; border-radius:.5rem }
+
+  /* Uniform dashboard tiles */
+  .dashCard {
+    height: var(--dash-h);
+    display:flex;
+    flex-direction:column;
+    position:relative;   /* overlay anchor */
+  }
+  .dashHead { flex: 0 0 auto; }
+  .dashBody {
+    flex: 1 1 auto;
+    overflow:auto;
+    position:relative;
+    scrollbar-width: thin;
+  }
+  .dashBody::-webkit-scrollbar { width:6px; }
+  .dashBody::-webkit-scrollbar-thumb { background:#1E2A33; border-radius:4px; }
+
+  /* Shadow stays at the bottom of the card, not the scroll content */
+  .dashCard::after {
+    content:"";
+    position:absolute;
+    left:0;
+    right:0;
+    bottom:0;
+    height:18px;
+    pointer-events:none;
+    background: linear-gradient(to top, rgba(11,15,18,0.9), rgba(11,15,18,0));
+  }
+
+  .chartBox { height: 320px; }
+  .chartBox canvas { width:100% !important; height:100% !important; }
+
+  .miniChartWrap { height: 220px; }
+  #miniChart { height: 100% !important; width: 100% !important; }
+
+  /* YouTube panel as 2-column grid */
+  #ytList {
+    display:grid;
+    grid-template-columns: repeat(2, minmax(0,1fr));
+    gap:0.75rem;
+  }
+  @media (max-width: 1024px){
+    #ytList { grid-template-columns: 1fr; }
+  }
+  #ytList > div { height:100%; }
+  #ytList img { width:100%; height:auto; max-height:160px; object-fit:cover; border-radius:0.5rem; }
+
+  /* Toast notice animation */
+  #notice { opacity: 0; transform: translateY(8px); transition: opacity .2s ease, transform .2s ease; }
+  #notice:not(.hidden) { opacity: 1; transform: translateY(0); }
+
+  /* Status pill styling */
+  .status-pill {
+    padding: 0.2rem 0.6rem;
+    border-radius: 9999px;
+    font-size: 0.7rem;
+    border-width: 1px;
+    border-style: solid;
+    display:inline-flex;
+    align-items:center;
+    gap:0.3rem;
+  }
+  .status-loading {
+    background: rgba(148,163,184,.25);
+    border-color: rgba(148,163,184,.7);
+    color: #e5e7eb;
+  }
+  .status-feeds {
+    background: rgba(245,158,11,.18);
+    border-color: rgba(245,158,11,.7);
+    color: #fef3c7;
+  }
+  .status-ready {
+    background: rgba(34,197,94,.18);
+    border-color: rgba(34,197,94,.7);
+    color: #dcfce7;
+  }
+
+  /* Progress bar under header right */
+  #loadProgressTrack {
+    opacity: 0;
+    transform: translateY(2px);
+    transition: opacity .35s ease, transform .35s ease;
+  }
+  #loadProgressTrack.progress-visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  #loadProgressTrack.progress-hidden {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  #loadProgressBar {
+    transition: width .3s ease;
+  }
+
+  /* Status select pill */
+  .statusSel {
+    border-radius:9999px;
+    padding-left:0.6rem;
+    padding-right:1.5rem;
+    font-size:0.8rem;
+  }
+  .status-idea {
+    background:rgba(148,163,184,.16);
+    border-color:#4b5563;
+    color:#e5e7eb;
+  }
+  .status-scheduled {
+    background:rgba(59,130,246,.18);
+    border-color:#3b82f6;
+    color:#dbeafe;
+  }
+  .status-recording {
+    background:rgba(245,158,11,.18);
+    border-color:#f59e0b;
+    color:#fffbeb;
+  }
+  .status-go-live {
+    background:rgba(14,165,233,.18);
+    border-color:#0ea5e9;
+    color:#e0f2fe;
+  }
+  .status-published {
+    background:rgba(34,197,94,.18);
+    border-color:#22c55e;
+    color:#dcfce7;
+  }
+  .status-archived {
+    background:rgba(107,114,128,.24);
+    border-color:#6b7280;
+    color:#e5e7eb;
+  }
+  .status-completed {
+    background:rgba(34,197,94,.18);
+    border-color:#22c55e;
+    color:#dcfce7;
+  }
+
+  /* Modal overlay + panel (centered + animated) */
+  .modal-overlay {
+    position:fixed;
+    inset:0;
+    background:rgba(0,0,0,.65);
+    backdrop-filter: blur(8px);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    z-index:60;
+    padding:1.5rem;
+
+    opacity:0;
+    pointer-events:none;
+    transition: opacity .25s ease;
+  }
+  .modal-overlay.modal-open {
+    opacity:1;
+    pointer-events:auto;
+  }
+
+  .modal-panel {
+    max-width:1100px;
+    width:100%;
+    max-height:90vh;
+    overflow:auto;
+
+    transform: translateY(10px) scale(.97);
+    opacity:0;
+    transition: opacity .25s ease, transform .25s ease;
+  }
+  .modal-overlay.modal-open .modal-panel {
+    transform: translateY(0) scale(1);
+    opacity:1;
+  }
+
+  /* Skeleton loaders */
+  .skeleton {
+    position:relative;
+    overflow:hidden;
+    background:#111827;
+    border-radius:0.5rem;
+  }
+  .skeleton::after {
+    content:"";
+    position:absolute;
+    inset:0;
+    background:linear-gradient(90deg,
+      rgba(15,23,42,0),
+      rgba(148,163,184,0.35),
+      rgba(15,23,42,0)
+    );
+    transform:translateX(-100%);
+    animation:skeleton-shimmer 1.3s ease-in-out infinite;
+  }
+  .skeleton-pill { border-radius:9999px; }
+  .skeleton-circle { border-radius:9999px; }
+  .skeleton-sm { height:0.75rem; }
+  .skeleton-md { height:1rem; }
+  .skeleton-lg { height:1.5rem; }
+
+  @keyframes skeleton-shimmer {
+    100% { transform:translateX(100%); }
+  }
+
+  /* Logo soft pulse while loading / before custom logo */
+  .skeleton-img {
+    background:#111827;
+    animation:skeleton-pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes skeleton-pulse {
+    0% { opacity:0.5; }
+    50%{ opacity:1; }
+    100%{ opacity:0.5; }
+  }
+/* === Matt's Requests: Board (Kanban) === */
+.requests-toolbar .chip {
+  background:#0F151A; border:1px solid #1E2A33; border-radius:9999px; padding:.25rem .6rem; font-size:.75rem;
+}
+.requests-toolbar .chip strong { color:#E6F2EA; margin-left:.25rem }
+
+.board-wrap {
+  display:grid; gap:0.75rem;
+  grid-template-columns: repeat(5, minmax(0,1fr));
+}
+@media (max-width: 1200px){ .board-wrap { grid-template-columns: repeat(3, minmax(0,1fr)); } }
+@media (max-width: 800px) { .board-wrap { grid-template-columns: repeat(1, minmax(0,1fr)); } }
+
+.board-col { background:#0F151A; border:1px solid #1E2A33; border-radius:.75rem; display:flex; flex-direction:column; min-height:220px; }
+.board-col header { padding:.6rem .75rem; border-bottom:1px solid #1E2A33; display:flex; justify-content:space-between; align-items:center }
+.board-col header .title { font-weight:600; }
+.board-col header .count { font-size:.75rem; color:#9BB4A1 }
+
+.req-card {
+  border-bottom:1px solid #1E2A33; padding:.6rem .75rem;
+}
+.req-card:last-child { border-bottom:0 }
+.req-title { font-weight:600; font-size:.9rem }
+.req-meta { font-size:.7rem; color:#9BB4A1; margin-top:.25rem; display:flex; gap:.5rem; align-items:center; flex-wrap:wrap }
+.req-actions { margin-top:.5rem; display:flex; gap:.4rem; flex-wrap:wrap }
+.req-badge {
+  font-size:.65rem; padding:.15rem .45rem; border-radius:.45rem; border:1px solid #1E2A33;
+}
+.req-badge.overdue { background:rgba(248,113,113,.12); color:#fecaca; border-color:rgba(248,113,113,.45) }
+.req-badge.soon    { background:rgba(250,204,21,.12);  color:#fef9c3; border-color:rgba(250,204,21,.45) }
+.req-badge.ok      { background:rgba(34,197,94,.12);   color:#dcfce7; border-color:rgba(34,197,94,.45) }
+
+.badge-prio-high { background:rgba(248,113,113,.15); color:#fecaca; border-color:rgba(248,113,113,.45) }
+.badge-prio-med  { background:rgba(245,158,11,.15);  color:#fde68a; border-color:rgba(245,158,11,.45) }
+.badge-prio-low  { background:rgba(148,163,184,.12); color:#e5e7eb; border-color:rgba(148,163,184,.35) }
+
+.view-toggle .btn.active { background:#1193b8; color:#fff; border-color:#1193b8 }
+
+</style>
+</head>
+<body class="p-6">
+
+<!-- Header -->
+<header class="sticky top-0 z-50 bg-[#05080B]/95 bg-gradient-to-r from-[#05080B] via-[#07141B] to-[#05080B] backdrop-blur border-b border-[#1E2A33] flex flex-wrap items-center justify-between gap-3 px-6 py-3 -mx-6 -mt-6 mb-0.7">
+  <div class="flex flex-col gap-2">
+    <div class="flex items-center gap-3">
+      <img id="logo" alt="BIMTech Media Hub"
+           class="h-12 w-12 rounded-md object-contain skeleton-img"
+           referrerpolicy="no-referrer" crossorigin="anonymous"
+           src="https://drive.google.com/thumbnail?id=1hsk_k-cn8iA4RkN7KuCZIkX9lKS_Q5oz"/>
+      <div>
+        <div class="text-lg font-semibold">BIMTech Media Hub</div>
+        <div class="text-xs text-dim">Podcast • YouTube • LinkedIn • Drone • Training • Ideas</div>
+      </div>
+    </div>
+    <!-- Hero chips -->
+    <div class="mt-1 flex flex-wrap gap-2 text-xs" id="heroChips">
+      <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full border border-[#1E2A33] bg-[#0F151A]">
+        🎙 <span id="chipEpisodes">0</span> episodes
+      </span>
+      <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full border border-[#1E2A33] bg-[#0F151A]">
+        ▶️ <span id="chipYT">0</span> videos
+      </span>
+      <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full border border-[#1E2A33] bg-[#0F151A]">
+        📅 <span id="chipPlanners">0</span> planner items
+      </span>
+      <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full border border-[#1E2A33] bg-[#0F151A]">
+        💡 <span id="chipIdeas">0</span> ideas
+      </span>
+    </div>
+  </div>
+
+  <!-- Right side: status + controls + progress + timestamp -->
+  <div class="flex flex-col items-end gap-1 w-full sm:w-auto">
+    <div class="flex items-center gap-2">
+      <span id="appStatus" class="status-pill status-loading">
+        <span class="w-2 h-2 rounded-full bg-slate-300 animate-pulse"></span>
+        <span>Loading feeds…</span>
+      </span>
+      <button id="refreshAll" class="btn btn-primary">⟳ Refresh</button>
+      <button id="openCalendar" class="btn btn-outline" title="Open calendar">📅</button>
+      <button id="openAnalytics" class="btn btn-outline" title="Open analytics">📊</button>
+      <button id="openSettings" class="btn btn-outline" title="Open settings">⚙</button>
+    </div>
+    <div id="loadProgressTrack" class="w-full sm:w-64 h-1 bg-[#11161B] rounded-full overflow-hidden mt-1">
+      <div id="loadProgressBar" class="h-full bg-[#1193b8]" style="width:0%"></div>
+    </div>
+    <div class="text-[11px] text-dim text-right">
+      Last updated: <span id="lastUpdated">—</span>
+    </div>
+  </div>
+</header>
+
+<!-- Tabs -->
+<div class="sticky top-[56px] z-40 bg-[#0B0F12]/90 backdrop-blur border-b border-[#1E2A33] -mx-6 px-6 py-1.5 mb-4">
+  <div class="mt-2 mb-2 flex border border-[#1E2A33] rounded-lg overflow-hidden">
+    <button data-tab="dashboard" class="tabTrigger flex-1 px-3 py-2 border-r border-[#1E2A33]">Dashboard</button>
+    <button data-tab="planner"   class="tabTrigger flex-1 px-3 py-2 border-r border-[#1E2A33]">Planner</button>
+    <button data-tab="drone"     class="tabTrigger flex-1 px-3 py-2 border-r border-[#1E2A33]">Drone</button>
+    <button data-tab="requests"  class="tabTrigger flex-1 px-3 py-2 border-r border-[#1E2A33]">Matt’s Requests</button>
+    <button data-tab="training"  class="tabTrigger flex-1 px-3 py-2 border-r border-[#1E2A33]">Training</button>
+    <button data-tab="ideas"     class="tabTrigger flex-1 px-3 py-2">Ideas</button>
+  </div>
+</div>
+
+<!-- Toast Notice -->
+<div id="notice" class="hidden fixed bottom-4 right-4 z-[100]">
+  <div class="card px-3 py-2 text-sm bg-[#0F151A]/90 border-[#1E2A33] shadow-xl rounded-lg min-w-[260px]">
+    <div class="flex items-start gap-2">
+      <div class="pt-0.5 opacity-70">⚠️</div>
+      <div id="noticeMsg" class="text-dim"></div>
+    </div>
+  </div>
+</div>
+
+<!-- DASHBOARD -->
+<section id="tab-dashboard" class="card p-4">
+  <!-- Today Focus strip -->
+  <div id="todayFocus" class="mb-4 border border-[#1E2A33] rounded-lg p-3 bg-[#0F151A] text-sm"></div>
+
+  <div class="grid3">
+    <!-- Podcast -->
+    <div class="card p-4 dashCard">
+      <div class="dashHead flex items-center justify-between">
+        <h3 class="font-semibold text-lg">Latest Podcast Episodes</h3>
+        <span id="podcastBadge" class="badge">—</span>
+      </div>
+      <div class="dashBody mt-3 space-y-3 text-sm">
+        <!-- Skeleton while RSS loads -->
+        <div id="podcastSkeleton" class="space-y-3">
+          <div class="skeleton skeleton-lg"></div>
+          <div class="skeleton skeleton-lg"></div>
+          <div class="skeleton skeleton-lg"></div>
+        </div>
+        <!-- Real content -->
+        <div id="podcastList" class="space-y-3 text-sm hidden"></div>
+      </div>
+    </div>
+
+    <!-- YouTube (2-column grid) -->
+    <div class="card p-4 dashCard">
+      <div class="dashHead flex items-center justify-between">
+        <h3 class="font-semibold text-lg">Latest YouTube Videos</h3>
+        <span id="ytBadge" class="badge">—</span>
+      </div>
+      <div class="dashBody mt-3 text-sm">
+        <!-- Skeleton grid -->
+        <div id="ytSkeleton" class="grid grid-cols-2 gap-3">
+          <div class="skeleton" style="height:150px;"></div>
+          <div class="skeleton" style="height:150px;"></div>
+          <div class="skeleton" style="height:150px;"></div>
+          <div class="skeleton" style="height:150px;"></div>
+        </div>
+        <!-- Real content -->
+        <div id="ytList" class="hidden"></div>
+      </div>
+    </div>
+
+    <!-- Mini calendar -->
+    <div class="card p-4 dashCard">
+      <div class="dashHead flex items-center justify-between">
+        <h3 class="font-semibold text-lg">This Month — Calendar</h3>
+        <div class="flex items-center gap-2">
+          <button id="miniPrev" class="btn btn-outline px-2 py-1 text-xs">←</button>
+          <div id="miniTitle" class="text-xs text-dim px-1"></div>
+          <button id="miniNext" class="btn btn-outline px-2 py-1 text-xs">→</button>
+        </div>
+      </div>
+      <div class="dashBody mt-3">
+        <!-- Skeleton calendar grid -->
+        <div id="miniCalSkeleton" class="grid grid-cols-7 gap-2 w-full">
+          <!-- A handful of placeholder cells -->
+          <div class="skeleton skeleton-sm"></div>
+          <div class="skeleton skeleton-sm"></div>
+          <div class="skeleton skeleton-sm"></div>
+          <div class="skeleton skeleton-sm"></div>
+          <div class="skeleton skeleton-sm"></div>
+          <div class="skeleton skeleton-sm"></div>
+          <div class="skeleton skeleton-sm"></div>
+          <div class="skeleton skeleton-sm"></div>
+          <div class="skeleton skeleton-sm"></div>
+          <div class="skeleton skeleton-sm"></div>
+          <div class="skeleton skeleton-sm"></div>
+          <div class="skeleton skeleton-sm"></div>
+          <div class="skeleton skeleton-sm"></div>
+          <div class="skeleton skeleton-sm"></div>
+        </div>
+        <!-- Real mini calendar -->
+        <div id="miniCalendar" class="grid grid-cols-7 gap-2 hidden"></div>
+      </div>
+    </div>
+
+    <!-- Summary -->
+    <div class="card p-4">
+      <h3 class="font-semibold text-lg mb-2">Summary</h3>
+      <!-- Skeleton summary -->
+      <div id="summarySkeleton" class="grid grid-cols-2 gap-3">
+        <div class="card p-3">
+          <div class="skeleton skeleton-sm w-20"></div>
+          <div class="mt-2 skeleton skeleton-lg"></div>
+        </div>
+        <div class="card p-3">
+          <div class="skeleton skeleton-sm w-20"></div>
+          <div class="mt-2 skeleton skeleton-lg"></div>
+        </div>
+        <div class="card p-3">
+          <div class="skeleton skeleton-sm w-24"></div>
+          <div class="mt-2 skeleton skeleton-lg"></div>
+        </div>
+        <div class="card p-3">
+          <div class="skeleton skeleton-sm w-16"></div>
+          <div class="mt-2 skeleton skeleton-lg"></div>
+        </div>
+      </div>
+      <!-- Real stats -->
+      <div id="summaryStats" class="grid grid-cols-2 gap-3 hidden">
+        <div class="card p-3">
+          <div class="text-dim text-xs">Podcast Episodes</div>
+          <div id="statEpisodes" class="text-2xl font-bold">—</div>
+        </div>
+        <div class="card p-3">
+          <div class="text-dim text-xs">YouTube Videos</div>
+          <div id="statYT" class="text-2xl font-bold">—</div>
+        </div>
+        <div class="card p-3">
+          <div class="text-dim text-xs">Planner Items</div>
+          <div id="statPlanners" class="text-2xl font-bold">—</div>
+        </div>
+        <div class="card p-3">
+          <div class="text-dim text-xs">Ideas</div>
+          <div id="statIdeas" class="text-2xl font-bold">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Ideas preview -->
+    <div class="card p-4">
+      <h3 class="font-semibold text-lg mb-2">Latest Ideas</h3>
+      <div id="ideasPreviewSkeleton" class="space-y-2">
+        <div class="skeleton skeleton-md"></div>
+        <div class="skeleton skeleton-md"></div>
+        <div class="skeleton skeleton-md"></div>
+      </div>
+      <div id="ideasPreview" class="text-sm space-y-2 hidden"></div>
+    </div>
+
+    <!-- Activity chart -->
+    <div class="card p-4">
+      <h3 class="font-semibold text-lg mb-2">Activity (last 12 months)</h3>
+      <div class="miniChartWrap"><canvas id="miniChart"></canvas></div>
+    </div>
+
+    <!-- Upcoming 7 days -->
+    <div class="card p-4">
+      <h3 class="font-semibold text-lg mb-2">Next 7 Days</h3>
+      <div id="upcomingShort" class="text-sm"></div>
+    </div>
+
+    <!-- Matt's open requests -->
+    <div class="card p-4">
+      <h3 class="font-semibold text-lg mb-2">Matt’s Open Requests</h3>
+      <div id="mattPreview" class="text-sm"></div>
+    </div>
+
+    <!-- Marco quote -->
+    <div class="card p-4">
+      <h3 class="font-semibold text-lg mb-2">Marco Pierre White — Quote of the Day</h3>
+      <div id="marcoQuoteText" class="text-sm italic mb-2">Loading quote…</div>
+      <div id="marcoQuoteMeta" class="text-xs text-dim">— Marco Pierre White</div>
+      <button id="marcoQuoteNext" class="btn btn-outline mt-3 text-xs">New quote</button>
+    </div>
+  </div>
+</section>
+
+<!-- PLANNER: Podcast + YouTube + LinkedIn -->
+<section id="tab-planner" class="hidden mt-4 space-y-4">
+    <!-- Podcast -->
+  <div class="card p-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="font-semibold text-lg">Podcast Planner</h2>
+      <div class="flex gap-2 items-center">
+        <div class="view-toggle hidden md:flex gap-1">
+          <button id="podViewTable" class="btn btn-outline text-xs">Table</button>
+          <button id="podViewBoard" class="btn btn-outline text-xs">Board</button>
+        </div>
+        <button class="btn btn-primary" data-add="Podcast">Add Row</button>
+        <button class="btn btn-outline" data-save="Podcast">Save</button>
+        <button class="btn btn-outline" data-reload="Podcast">Reload</button>
+      </div>
+    </div>
+
+    <div class="mb-3 flex gap-2">
+      <input class="w-64 px-3 py-2" placeholder="Search…" data-search="Podcast">
+      <span class="text-dim text-xs">Columns: Title | Guest | Status | Planned | Notes | LastEditedBy</span>
+    </div>
+
+    <!-- Podcast board view -->
+    <div id="podcastBoard" class="hidden">
+      <div class="board-wrap" id="podcastBoardWrap"></div>
+    </div>
+
+    <!-- Podcast table view -->
+    <div id="podcastTable">
+      <div data-grid="Podcast"></div>
+    </div>
+  </div>
+
+  <!-- YouTube -->
+  <div class="card p-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="font-semibold text-lg">YouTube Planner</h2>
+      <div class="flex gap-2 items-center">
+  <div class="view-toggle hidden md:flex gap-1">
+    <button id="ytViewTable" class="btn btn-outline text-xs">Table</button>
+    <button id="ytViewBoard" class="btn btn-outline text-xs">Board</button>
+  </div>
+  <button class="btn btn-primary" data-add="YouTube">Add Row</button>
+  <button class="btn btn-outline" data-save="YouTube">Save</button>
+  <button class="btn btn-outline" data-reload="YouTube">Reload</button>
+</div>
+    </div>
+        <div class="mb-3 flex gap-2">
+      <input class="w-64 px-3 py-2" placeholder="Search…" data-search="YouTube">
+      <span class="text-dim text-xs">Columns: Title | Link | Status | Planned | Thumbnail | Notes | LastEditedBy</span>
+    </div>
+
+    <!-- YouTube board view -->
+    <div id="youtubeBoard" class="hidden">
+      <div class="board-wrap" id="youtubeBoardWrap"></div>
+    </div>
+
+    <!-- YouTube table view -->
+    <div id="youtubeTable">
+      <div data-grid="YouTube"></div>
+    </div>
+  </div>
+
+  <!-- LinkedIn -->
+<div class="card p-4">
+  <div class="flex items-center justify-between mb-2">
+    <h2 class="font-semibold text-lg">LinkedIn Planner</h2>
+    <div class="flex gap-2 items-center">
+      <div class="view-toggle hidden md:flex gap-1">
+        <button id="liViewTable" class="btn btn-outline text-xs">Table</button>
+        <button id="liViewBoard" class="btn btn-outline text-xs">Board</button>
+      </div>
+      <button class="btn btn-primary" data-add="LinkedIn">Add Row</button>
+      <button class="btn btn-outline" data-save="LinkedIn">Save</button>
+      <button class="btn btn-outline" data-reload="LinkedIn">Reload</button>
+    </div>
+  </div>
+
+  <div class="mb-3 flex gap-2">
+    <input class="w-64 px-3 py-2" placeholder="Search…" data-search="LinkedIn">
+    <span class="text-dim text-xs">
+      Columns: Title | Type | Status | Planned | Link | Notes | LastEditedBy
+    </span>
+  </div>
+
+  <!-- Board view -->
+  <div id="linkedinBoard" class="hidden">
+    <div class="board-wrap" id="linkedinBoardWrap"></div>
+  </div>
+
+  <!-- Table view -->
+  <div id="linkedinTable">
+    <div data-grid="LinkedIn"></div>
+  </div>
+</div>
+</section>
+
+<!-- DRONE -->
+<section id="tab-drone" class="hidden card p-4 mt-4">
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="font-semibold text-lg">Drone Operations Planner</h2>
+    <div class="flex gap-2">
+      <button class="btn btn-primary" data-add="Drone">Add Flight</button>
+      <button class="btn btn-outline" data-save="Drone">Save</button>
+      <button class="btn btn-outline" data-reload="Drone">Reload</button>
+    </div>
+  </div>
+
+  <!-- Summary chips -->
+  <div class="flex flex-wrap gap-2 text-xs mb-4">
+    <span class="inline-flex items-center gap-2 px-2 py-1 rounded-full border border-[#1E2A33] bg-[#0F151A]">
+      🚁 <span id="droneTotalCount">0</span> flights
+    </span>
+    <span class="inline-flex items-center gap-2 px-2 py-1 rounded-full border border-amber-500/40 bg-amber-500/10">
+      ⚠️ <span id="droneFrzRequiredCount">0</span> need FRZ check
+    </span>
+    <span class="inline-flex items-center gap-2 px-2 py-1 rounded-full border border-red-500/50 bg-red-500/10">
+      🛑 <span id="droneHighRiskCount">0</span> flagged high-risk
+    </span>
+  </div>
+
+  <!-- Search -->
+  <div class="mb-3 flex flex-wrap gap-2 items-center">
+    <input class="w-64 px-3 py-2" placeholder="Search flights…" data-search="Drone">
+    <span class="text-dim text-xs">
+      Key fields: Title • Site • Pilot • Category • Risk • FRZ • Planned date
+    </span>
+  </div>
+
+  <!-- Cards will be rendered here -->
+  <div data-grid="Drone"></div>
+</section>
+
+<!-- MATT'S REQUESTS -->
+<section id="tab-requests" class="hidden card p-4 mt-4">
+  <div class="flex items-center justify-between mb-2">
+    <h2 class="font-semibold text-lg">Matt’s Requests</h2>
+    <div class="flex gap-2 items-center">
+      <div class="view-toggle hidden md:flex gap-1">
+        <button id="reqViewTable" class="btn btn-outline text-xs">Table</button>
+        <button id="reqViewBoard" class="btn btn-outline text-xs">Board</button>
+      </div>
+      <button class="btn btn-primary" data-add="MattsRequests">Add Row</button>
+      <button class="btn btn-outline" data-save="MattsRequests">Save</button>
+      <button class="btn btn-outline" data-reload="MattsRequests">Reload</button>
+    </div>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="requests-toolbar mb-3 flex flex-wrap items-center gap-2 text-xs">
+    <input class="w-64 px-3 py-2" placeholder="Search…" data-search="MattsRequests">
+    <span class="text-dim">Columns: Request | Priority | Status | Owner | DueDate | Notes | LastEditedBy</span>
+    <div class="flex-1"></div>
+    <span class="chip">Open<strong id="reqChipOpen">0</strong></span>
+    <span class="chip">High<strong id="reqChipHigh">0</strong></span>
+    <span class="chip">Due 7d<strong id="reqChipWeek">0</strong></span>
+    <span class="chip">Overdue<strong id="reqChipOverdue">0</strong></span>
+  </div>
+
+  <!-- Quick filters -->
+  <div class="mb-3 flex flex-wrap gap-2 text-xs">
+    <span class="text-dim">Quick filter:</span>
+    <button class="btn btn-outline" id="mreqFilterAll">All</button>
+    <button class="btn btn-outline" id="mreqFilterHigh">High priority</button>
+    <button class="btn btn-outline" id="mreqFilterWeek">Due this week</button>
+    <button class="btn btn-outline" id="mreqFilterOverdue">Overdue</button>
+  </div>
+
+  <!-- Board view -->
+  <div id="requestsBoard" class="hidden">
+    <div class="board-wrap" id="requestsBoardWrap"></div>
+  </div>
+
+  <!-- Table view (your original grid) -->
+  <div id="requestsTable">
+    <div data-grid="MattsRequests"></div>
+  </div>
+</section>
+
+<!-- TRAINING -->
+<section id="tab-training" class="hidden card p-4 mt-4">
+  <div class="flex items-center justify-between mb-2">
+    <h2 class="font-semibold text-lg">Training Planner</h2>
+    <div class="flex gap-2 items-center">
+      <div class="view-toggle hidden md:flex gap-1">
+        <button id="trainingViewTable" class="btn btn-outline text-xs">Table</button>
+        <button id="trainingViewBoard" class="btn btn-outline text-xs">Board</button>
+      </div>
+      <button class="btn btn-primary" data-add="Training">Add Row</button>
+      <button class="btn btn-outline" data-save="Training">Save</button>
+      <button class="btn btn-outline" data-reload="Training">Reload</button>
+    </div>
+  </div>
+
+  <div class="mb-3 flex gap-2">
+    <input class="w-64 px-3 py-2" placeholder="Search…" data-search="Training">
+    <span class="text-dim text-xs">
+      Columns: TrainingType | ModuleName | LessonTitle | Owner | Status | Planned | Progress | Notes | LastEditedBy
+    </span>
+  </div>
+
+  <!-- Board view -->
+  <div id="trainingBoard" class="hidden">
+    <div class="board-wrap" id="trainingBoardWrap"></div>
+  </div>
+
+  <!-- Table view -->
+  <div id="trainingTable">
+    <div data-grid="Training"></div>
+  </div>
+</section>
+
+<!-- IDEAS -->
+<section id="tab-ideas" class="hidden card p-4 mt-4">
+  <div class="flex items-center justify-between mb-2">
+    <h2 class="font-semibold text-lg">Ideas Board</h2>
+    <div class="flex gap-2">
+      <button id="ideaAdd" class="btn btn-primary">Add Idea</button>
+      <button id="ideaSave" class="btn btn-outline">Save</button>
+      <button id="ideaReload" class="btn btn-outline">Reload</button>
+    </div>
+  </div>
+
+  <div class="mb-3 flex gap-2">
+    <input id="ideaSearch" class="w-64 px-3 py-2" placeholder="Search ideas…">
+    <span class="text-dim text-xs">
+      Columns: Idea | Category | Author | Created | Notes
+    </span>
+  </div>
+
+  <div id="ideasGrid"></div>
+</section>
+
+<!-- CALENDAR MODAL -->
+<div id="modal-calendar" class="modal-overlay">
+  <div class="modal-panel card p-4">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="font-semibold text-lg">Content Calendar</h2>
+      <button id="closeCalendar" class="btn btn-outline text-sm">✕ Close</button>
+    </div>
+    <section id="tab-calendar">
+      <div class="flex items-center justify-between mb-3">
+        <div class="text-xs text-dim">
+          Shows planned dates from Podcast, YouTube, LinkedIn, Training, Drone and due dates from Matt’s Requests.
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="calPrev" class="btn btn-outline">← Prev</button>
+          <div id="calTitle" class="text-dim text-sm px-2"></div>
+          <button id="calNext" class="btn btn-outline">Next →</button>
+          <button id="calToday" class="btn btn-primary">Today</button>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap gap-2 mb-3 text-xs">
+        <span class="inline-flex items-center gap-2 px-2 py-1 rounded border" style="background:rgba(17,147,184,.18); border-color:#1193b8; color:#c9f1fb">
+          <span class="w-2 h-2 rounded-full" style="background:#1193b8"></span> Podcast
+        </span>
+        <span class="inline-flex items-center gap-2 px-2 py-1 rounded border" style="background:rgba(244,114,182,.16); border-color:#f472b6; color:#ffd9eb">
+          <span class="w-2 h-2 rounded-full" style="background:#f472b6"></span> YouTube
+        </span>
+        <span class="inline-flex items-center gap-2 px-2 py-1 rounded border" style="background:rgba(59,130,246,.16); border-color:#3b82f6; color:#dbeafe">
+          <span class="w-2 h-2 rounded-full" style="background:#3b82f6"></span> LinkedIn
+        </span>
+        <span class="inline-flex items-center gap-2 px-2 py-1 rounded border" style="background:rgba(34,197,94,.16); border-color:#22c55e; color:#dcfce7">
+          <span class="w-2 h-2 rounded-full" style="background:#22c55e"></span> Training
+        </span>
+        <span class="inline-flex items-center gap-2 px-2 py-1 rounded border" style="background:rgba(168,85,247,.16); border-color:#a855f7; color:#f5e9ff">
+          <span class="w-2 h-2 rounded-full" style="background:#a855f7"></span> Drone
+        </span>
+        <span class="inline-flex items-center gap-2 px-2 py-1 rounded border" style="background:rgba(250,204,21,.16); border-color:#facc15; color:#fef3c7">
+          <span class="w-2 h-2 rounded-full" style="background:#facc15"></span> Matt’s Requests
+        </span>
+      </div>
+
+      <div id="calendarGrid" class="grid grid-cols-7 gap-2"></div>
+    </section>
+  </div>
+</div>
+
+<!-- ANALYTICS MODAL -->
+<div id="modal-analytics" class="modal-overlay">
+  <div class="modal-panel card p-4">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="font-semibold text-lg">Analytics</h2>
+      <button id="closeAnalytics" class="btn btn-outline text-sm">✕ Close</button>
+    </div>
+    <section id="tab-analytics">
+      <div class="grid lg:grid-cols-2 gap-4">
+        <!-- Planner items per channel -->
+        <div class="card p-4">
+          <h3 class="font-semibold mb-1">Planner Items by Channel</h3>
+          <p class="text-xs text-dim mb-2">Total rows in each planner (Podcast, YouTube, LinkedIn, Training, Matt’s Requests, Ideas, Drone).</p>
+          <div class="chartBox"><canvas id="chartBySheet"></canvas></div>
+        </div>
+
+        <!-- Upcoming items per channel -->
+        <div class="card p-4">
+          <h3 class="font-semibold mb-1">Upcoming Items by Channel</h3>
+          <p class="text-xs text-dim mb-2">Count of items with a future planned/due date.</p>
+          <div class="chartBox"><canvas id="chartUpcoming"></canvas></div>
+        </div>
+
+        <!-- Training progress per module -->
+        <div class="card p-4">
+          <h3 class="font-semibold mb-1">Training Modules — Completion</h3>
+          <p class="text-xs text-dim mb-2">Progress per training video/module (based on the Status/Progress column).</p>
+          <div class="chartBox"><canvas id="chartTraining"></canvas></div>
+        </div>
+
+        <!-- Releases per month -->
+        <div class="card p-4">
+          <h3 class="font-semibold mb-1">Releases per Month (Podcast vs YouTube)</h3>
+          <p class="text-xs text-dim mb-2">Episodes & videos published per month (last 12 months).</p>
+          <div class="chartBox"><canvas id="chartReleases"></canvas></div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- SETTINGS MODAL -->
+<div id="modal-settings" class="modal-overlay">
+  <div class="modal-panel card p-4">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="font-semibold text-lg">Settings</h2>
+      <button id="closeSettings" class="btn btn-outline text-sm">✕ Close</button>
+    </div>
+    <section>
+      <div class="grid md:grid-cols-2 gap-4">
+        <div class="space-y-2">
+          <label class="text-sm text-dim">Apps Script URL (multi-sheet)</label>
+          <input id="cfgScriptUrl" class="w-full px-3 py-2" placeholder="https://script.google.com/macros/s/.../exec">
+          <label class="text-sm text-dim">Podcast RSS</label>
+          <input id="cfgPodcastRss" class="w-full px-3 py-2" placeholder="https://feeds.buzzsprout.com/2302419.rss">
+          <label class="text-sm text-dim">YouTube Channel ID (for RSS)</label>
+          <input id="cfgYtChannel" class="w-full px-3 py-2" placeholder="UCxxxxxxxxxxxxxxxx">
+          <div class="text-xs text-dim">Your channel ID: <code>UC3YMGy7zvExkiI-VGKH_UFg</code></div>
+          <label class="text-sm text-dim">Logo URL (optional – overrides embedded placeholder)</label>
+          <input id="cfgLogo" class="w-full px-3 py-2" placeholder="https://drive.google.com/file/d/.../view">
+          <div class="flex gap-2 pt-1">
+            <button id="logoTest" class="btn btn-outline">Test Logo</button>
+            <a id="logoOpen" class="btn btn-outline" target="_blank" href="#">Open Logo</a>
+          </div>
+          <label class="text-sm text-dim mt-2 block">Your Name</label>
+          <input id="cfgUser" class="w-full px-3 py-2" placeholder="e.g., Adam H.">
+          <div class="flex gap-2 pt-2">
+            <button id="cfgSave" class="btn btn-primary">Save Settings</button>
+            <button id="cfgReset" class="btn btn-outline">Reset Local Cache</button>
+          </div>
+        </div>
+        <div class="space-y-2">
+          <div class="text-sm text-dim">Tips</div>
+          <ul class="list-disc pl-5 text-sm text-dim">
+            <li>Firefox can be strict with JSONP; this build retries with fresh callbacks.</li>
+            <li>Set a <b>Logo URL</b> to show your BIMTech image (Drive links are auto-converted; proxy fallback available).</li>
+            <li>Edits autosave ~1–2s after you stop typing; manual Save remains available.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+
+<script>
+/* ====== CONFIG / STATE ====== */
+const ls = {
+  get(k,fb){ try{ const v=localStorage.getItem(k); return v?JSON.parse(v):fb }catch{ return fb } },
+  set(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)) }catch{} },
+  del(k){ try{ localStorage.removeItem(k) }catch{} }
+};
+
+const CFG = {
+  scriptUrl: ls.get("cfg_scriptUrl", "https://script.google.com/macros/s/AKfycbxRldtbPS0k7P-1ROaure6SbTB5Il23SmoYRCvffJWZo1hhSELe30e_9lzhpEU3hvmxGQ/exec"),
+  podcastRss: ls.get("cfg_podcastRss", "https://feeds.buzzsprout.com/2302419.rss"),
+  ytChannel:  ls.get("cfg_ytChannel", "UC3YMGy7zvExkiI-VGKH_UFg"),
+  logoUrl:    ls.get("cfg_logo", "https://drive.google.com/thumbnail?id=1hsk_k-cn8iA4RkN7KuCZIkX9lKS_Q5oz"),
+  currentUser: ls.get("cfg_user", (()=>{ const p=prompt("Enter your name for the planners (e.g., Adam H.)")||"Anonymous"; ls.set("cfg_user", p); return p })()),
+};
+
+let plannerCache = { Podcast: [], YouTube: [], LinkedIn: [], MattsRequests: [], Training: [], Ideas: [], Drone: [] };
+let rssPodcast = [];
+let rssYouTube = [];
+
+const $ = (s)=>document.querySelector(s);
+function showNotice(msg, opts={}) {
+  const { persist=false } = opts;
+  const el = document.getElementById("notice");
+  document.getElementById("noticeMsg").textContent = msg;
+  el.classList.remove("hidden");
+  if (!persist) {
+    clearTimeout(showNotice._t);
+    showNotice._t = setTimeout(()=>hideNotice(), 3000);
+  }
+}
+function hideNotice(){ document.getElementById("notice").classList.add("hidden"); }
+function htmlesc(s){ return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])) }
+
+/* Remove skeleton on logo once real image loads */
+const logoEl = document.getElementById("logo");
+if (logoEl) {
+  logoEl.addEventListener("load", ()=> logoEl.classList.remove("skeleton-img"));
+}
+
+/* ====== APP STATUS / PROGRESS ====== */
+let feedsReady = false;
+let plannersReady = false;
+const sheetLoaded = {
+  Podcast:false,
+  YouTube:false,
+  LinkedIn:false,
+  MattsRequests:false,
+  Training:false,
+  Ideas:false,
+  Drone:false
+};
+
+// For smoother loading bar animation timing
+let progressHideTimer = null;
+
+function updateProgressVisual(){
+  const bar   = document.getElementById("loadProgressBar");
+  const track = document.getElementById("loadProgressTrack");
+  if (!bar || !track) return;
+
+  const totalSteps = 1 + Object.keys(sheetLoaded).length;
+  let done = (feedsReady ? 1 : 0) + Object.values(sheetLoaded).filter(Boolean).length;
+  if (done < 0) done = 0;
+  if (done > totalSteps) done = totalSteps;
+
+  const pct = Math.round((done / totalSteps) * 100);
+
+  // Always show the track while we’re doing actual work
+  track.classList.add("progress-visible");
+  track.classList.remove("progress-hidden");
+
+  // Animate the bar width
+  bar.style.width = pct + "%";
+
+  // If we’re at 100%, hold for a moment then fade the whole thing out
+  clearTimeout(progressHideTimer);
+  if (pct >= 100) {
+    progressHideTimer = setTimeout(() => {
+      track.classList.add("progress-hidden");
+      track.classList.remove("progress-visible");
+      // reset bar width for the next load
+      bar.style.width = "0%";
+    }, 600);
+  }
+}
+
+function setStatusMode(mode,text){
+  const el = document.getElementById("appStatus");
+  if(!el) return;
+  el.textContent = "";
+  const dot = document.createElement("span");
+  dot.className = "w-2 h-2 rounded-full";
+  if (mode === "ready") dot.style.background = "#22c55e";
+  else if (mode === "feeds") dot.style.background = "#f59e0b";
+  else dot.style.background = "#e5e7eb";
+  const t = document.createElement("span");
+  t.textContent = text;
+  el.className = "status-pill " + (
+    mode === "feeds" ? "status-feeds" :
+    mode === "ready" ? "status-ready" :
+    "status-loading"
+  );
+  el.appendChild(dot);
+  el.appendChild(t);
+  updateProgressVisual();
+}
+function markSheetLoaded(sheet){
+  sheetLoaded[sheet] = true;
+  if (Object.values(sheetLoaded).every(Boolean)) {
+    plannersReady = true;
+    if (feedsReady) setStatusMode("ready","Ready");
+  } else {
+    if (feedsReady) setStatusMode("feeds","Feeds ready — loading planners…");
+  }
+  updateProgressVisual();
+}
+function ensureSheetReady(sheet){
+  if (!sheetLoaded[sheet]) {
+    showNotice(`${sheet} is still loading from Google Sheets… please wait a moment.`);
+    return false;
+  }
+  return true;
+}
+
+/* ====== Ideas Preview (dashboard card) ====== */
+function renderIdeasPreview(){
+  const ideasPrev = document.getElementById("ideasPreview");
+  const ideasSk   = document.getElementById("ideasPreviewSkeleton");
+  if (!ideasPrev) return;
+
+  const rows = Array.isArray(plannerCache.Ideas) ? plannerCache.Ideas : [];
+
+  ideasPrev.innerHTML = rows.slice(0,5).map(r=>`
+    <div class="border border-[#1E2A33] rounded-md p-2">
+      <div class="font-semibold">${htmlesc(r.Idea || "(Untitled)")}</div>
+      <div class="text-xs text-dim">
+        ${htmlesc(r.Category || "")}${
+          r.Created ? ` · ${fmtDate(toInputDate(r.Created))}` : ""
+        }
+      </div>
+      <div class="text-sm mt-1 line-clamp-3">${htmlesc(r.Notes || "")}</div>
+    </div>
+  `).join("");
+
+  if (ideasSk) ideasSk.classList.add("hidden");
+  ideasPrev.classList.remove("hidden");
+}
+
+/* ====== DATE HELPERS ====== */
+function toInputDate(s){
+  if (s == null || s === "") return "";
+  const str = String(s).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+  const m = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (m) {
+    let [_, dd, mm, yy] = m;
+    if (yy.length === 2) yy = "20" + yy;
+    const d = new Date(Number(yy), Number(mm)-1, Number(dd));
+    if (!isNaN(d)) return d.toISOString().slice(0,10);
+  }
+  if (!isNaN(+str)) {
+    const base = new Date(Date.UTC(1899, 11, 30));
+    const d = new Date(base.getTime() + (+str) * 86400000);
+    if (!isNaN(d)) return d.toISOString().slice(0,10);
+  }
+  const d = new Date(str);
+  return isNaN(d) ? "" : d.toISOString().slice(0,10);
+}
+function toSheetDate(iso){
+  if (!iso) return "";
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return iso;
+  const [, y, mm, dd] = m;
+  return `${dd}/${mm}/${y}`;
+}
+function parseDateFlexible(s){
+  const iso = toInputDate(s);
+  return iso ? new Date(iso) : new Date(NaN);
+}
+// Pretty-print any date value (ISO, dd/mm/yyyy, Excel numbers, Date objects)
+function fmtDate(val){
+  if (!val) return "";
+  
+  let d;
+  if (val instanceof Date) {
+    d = val;
+  } else {
+    d = parseDateFlexible(val);
+  }
+
+  if (isNaN(d)) return "";
+
+  // e.g. "29 Nov 2025"
+  return d.toLocaleDateString(undefined, {
+    day:   "2-digit",
+    month: "short",
+    year:  "numeric",
+  });
+}
+
+/* ====== TRAINING PROGRESS MAPPING ====== */
+const TRAINING_PROGRESS = {
+  "Script Adaption": "5%",
+  "Script Review": "10%",
+  "Storyboarding": "20%",
+  "Internal Review": "30%",
+  "Voiceover Recording": "45%",
+  "Asset Creation": "60%",
+  "Animation": "75%",
+  "Internal Review 2": "85%",
+  "Final Render & Export": "95%",
+  "Upload & LMS Integration": "100%"
+};
+
+/* ====== STATUS COLOUR HELPER ====== */
+function statusClass(v){
+  const val = String(v||"").toLowerCase();
+
+  // Training stages
+  if (/script adaption|script review|storyboarding|internal review(?! 2)/i.test(val)) {
+    return "status-scheduled";
+  }
+  if (/voiceover recording|asset creation|animation/i.test(val)) {
+    return "status-recording";
+  }
+  if (/internal review 2|final render|upload & lms/i.test(val)) {
+    return "status-go-live";
+  }
+
+  // Generic media statuses
+  if (val === "idea") return "status-idea";
+  if (val === "scheduled") return "status-scheduled";
+
+  if (["recording","recorded","editing","review","uploading","designing/editing"].includes(val)) {
+    return "status-recording";
+  }
+
+  if (val === "scheduled go-live" || val === "go-live" || val === "scheduled upload" || val === "scheduled post") {
+    return "status-go-live";
+  }
+
+  if (val === "published" || val === "uploaded" || val === "posted") {
+    return "status-published";
+  }
+
+  if (val === "archived") return "status-archived";
+  if (val === "completed" || val === "done") return "status-completed";
+
+  return "";
+}
+
+/* ====== COMPLETED / DONE / ARCHIVED HELPER ====== */
+function isCompletedStatus(status){
+  // Treat all of these as "completed" everywhere
+  return /completed|done|archived|uploaded|posted/i.test(String(status || ""));
+}
+
+// Podcast: statuses that should disappear from the table and live only on the board
+function isPodcastBoardOnlyStatus(status){
+  return /published|archived|completed|done/i.test(String(status || ""));
+}
+
+// YouTube: statuses that should disappear from the table and live only on the board
+function isYouTubeBoardOnlyStatus(status){
+  return /uploaded|archived|completed|done/i.test(String(status || ""));
+}
+
+// LinkedIn: statuses that should disappear from the table and live only on the board
+function isLinkedInBoardOnlyStatus(status){
+  return /posted|archived|completed|done/i.test(String(status || ""));
+}
+
+// Drone: statuses that should live only in the "completed" section of the planner
+function isDroneBoardOnlyStatus(status){
+  return /completed|done|archived|cancelled/i.test(String(status || ""));
+}
+
+/* ====== YOUTUBE ID HELPER ====== */
+function extractYouTubeId(input){
+  try{
+    const s = String(input||"").trim();
+    if (!s) return "";
+    if (/^[a-zA-Z0-9_-]{11}$/.test(s)) return s;
+    const url = new URL(s);
+    if (url.hostname.includes("youtu.be")) {
+      const p = url.pathname.split("/").filter(Boolean);
+      return p[0] || "";
+    }
+    const v = url.searchParams.get("v");
+    if (v) return v;
+    const m = url.pathname.match(/\/shorts\/([^/]+)/);
+    if (m) return m[1];
+  } catch {}
+  return "";
+}
+
+/* ====== Stats & last updated ====== */
+function updateStats(){
+  const plannerSheets = ["Podcast","YouTube","LinkedIn","MattsRequests","Training","Drone"];
+  const plannersCount = plannerSheets.reduce((a,k)=> a + ((plannerCache[k]||[]).length), 0);
+  const ideasCount = (plannerCache.Ideas||[]).length;
+  const epCount = (rssPodcast||[]).length;
+  const ytCount = (rssYouTube||[]).length;
+  const set = (id,v)=>{ const el=document.getElementById(id); if(el) el.textContent=String(v) };
+  set("statPlanners", plannersCount);
+  set("statIdeas", ideasCount);
+  set("statEpisodes", epCount);
+  set("statYT", ytCount);
+  set("chipEpisodes", epCount);
+  set("chipYT", ytCount);
+  set("chipPlanners", plannersCount);
+  set("chipIdeas", ideasCount);
+
+  // Reveal summary stats once we have numbers
+  const sk = document.getElementById("summarySkeleton");
+  const st = document.getElementById("summaryStats");
+  if (sk && st) {
+    sk.classList.add("hidden");
+    st.classList.remove("hidden");
+  }
+}
+function bumpLastUpdated(){
+  const el = document.getElementById("lastUpdated");
+  if (!el) return;
+  const d = new Date();
+  el.textContent = d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) + " · " + d.toLocaleDateString();
+}
+
+/* ====== Marco Quote ====== */
+const MARCO_QUOTES = [
+  { text:"Cooking is a philosophy; it’s not a recipe.", note:"— Marco Pierre White" },
+  { text:"Perfection is lots of little things done well.", note:"— Marco Pierre White" },
+  { text:"The key to good cooking is simplicity.", note:"— Marco Pierre White" },
+  { text:"You learn a lot more from failure than success.", note:"— Marco Pierre White" },
+  { text:"Cooking is about emotion, intensity and honesty.", note:"— Marco Pierre White" },
+  { text:"The most important ingredient in the kitchen is passion.", note:"— Marco Pierre White" },
+  { text:"Respect the ingredients and they’ll respect you.", note:"— Marco Pierre White" },
+  { text:"Discipline is the bridge between ambition and results.", note:"— Marco Pierre White" },
+  { text:"A great plate is a story, not a stunt.", note:"— Marco Pierre White" }
+];
+function dayOfYear(d){
+  const start = new Date(d.getFullYear(),0,0);
+  const diff = d - start;
+  return Math.floor(diff / 86400000);
+}
+function renderMarcoQuote(mode){
+  const key = "marco_idx";
+  let idx = ls.get(key, null);
+  if (idx == null) {
+    const doy = dayOfYear(new Date());
+    idx = doy % MARCO_QUOTES.length;
+  } else if (mode === "next") {
+    idx = (idx + 1) % MARCO_QUOTES.length;
+  }
+  ls.set(key, idx);
+  const q = MARCO_QUOTES[idx];
+  const t = document.getElementById("marcoQuoteText");
+  const m = document.getElementById("marcoQuoteMeta");
+  if (t) t.textContent = `"${q.text}"`;
+  if (m) m.textContent = q.note || "— Marco Pierre White";
+}
+
+/* ====== JSONP util ====== */
+function jsonp(base, params={}, timeoutMs=20000, retries=1){
+  const qs = (o)=>Object.entries(o).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
+  async function once() {
+    const cb = "__cb_"+Math.random().toString(36).slice(2);
+    const url = base + (base.includes("?") ? "&" : "?") + qs({ ...params, callback: cb, t: Date.now() });
+    return await new Promise((resolve, reject)=>{
+      const s = document.createElement("script");
+      const timer = setTimeout(()=>{ cleanup(); reject(new Error("JSONP timeout")); }, timeoutMs);
+      function cleanup(){ clearTimeout(timer); try{ delete window[cb] }catch{}; if(s && s.parentNode) s.parentNode.removeChild(s) }
+      window[cb] = (payload)=>{ cleanup(); resolve(payload); };
+      s.src = url; s.async = true;
+      s.onerror = ()=>{ cleanup(); reject(new Error("JSONP network error")); };
+      document.head.appendChild(s);
+    });
+  }
+  return (async ()=>{
+    let err; let attempt=0;
+    while(attempt<=retries){
+      try { return await once(); }
+      catch(e){ err=e; await new Promise(r=>setTimeout(r, 500 + attempt*700)); attempt++; }
+    }
+    throw err || new Error("JSONP failed");
+  })();
+}
+
+/* ====== Sheet READ (JSONP + fallback) ====== */
+function jsonpRead(sheet, timeoutMs=20000, retries=1){
+  const base = CFG.scriptUrl.replace(/#.*$/, "");
+  async function tryJSONP(params){
+    const j = await jsonp(base, params, timeoutMs, retries);
+    if (!j || j.status!=="ok" || !Array.isArray(j.rows)) throw new Error("Bad JSONP payload");
+    return j.rows;
+  }
+  async function tryDirect(params){
+    const u = new URL(base);
+    Object.entries(params).forEach(([k,v])=>u.searchParams.set(k,v));
+    u.searchParams.set("t", Date.now());
+    const r = await fetch(u.toString(), { method:"GET", mode:"cors" });
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    const j = await r.json();
+    if (!j || j.status!=="ok" || !Array.isArray(j.rows)) throw new Error("Bad JSON");
+    return j.rows;
+  }
+  return (async ()=>{
+    try { return await tryJSONP({ sheet }); }
+    catch {
+      try { return await tryJSONP({ mode:'read', sheet }); }
+      catch { return await tryDirect({ mode:'read', sheet }); }
+    }
+  })();
+}
+
+/* ====== WRITE (with Training progress normalization) ====== */
+async function writeSheet(sheet, rows){
+  const url = CFG.scriptUrl + (CFG.scriptUrl.includes("?") ? "&" : "?") + "sheet=" + encodeURIComponent(sheet);
+
+  let payloadRows = rows;
+  if (sheet === "Training") {
+    payloadRows = rows.map(r=>{
+      const copy = { ...r };
+      if (copy.Progress != null && copy.Progress !== "") {
+        const s = String(copy.Progress).trim();
+        let num;
+        if (s.endsWith("%")) num = parseFloat(s.slice(0,-1));
+        else num = parseFloat(s);
+        if (!isNaN(num)) {
+          copy.Progress = (num/100).toString();
+        }
+      }
+      return copy;
+    });
+  }
+
+  const body = "payload=" + encodeURIComponent(JSON.stringify({ rows: payloadRows }));
+  const res = await fetch(url, { method:"POST", headers:{ "Content-Type":"application/x-www-form-urlencoded;charset=UTF-8" }, body });
+  if(!res.ok) throw new Error("Write HTTP "+res.status);
+  const j = await res.json();
+  if(j.status!=="ok") throw new Error("Write failed: "+(j.message||"unknown"));
+  return true;
+}
+
+/* ====== AUTOSAVE ====== */
+const SAVEQ = {}; const SAVE_DELAY = 1500;
+function queueAutoSave(sheet){
+  clearTimeout(SAVEQ[sheet]);
+  SAVEQ[sheet] = setTimeout(async ()=>{
+    try { await writeSheet(sheet, plannerCache[sheet]); showNotice(`${sheet}: autosaved`); setTimeout(hideNotice, 900); bumpLastUpdated(); }
+    catch(e){ showNotice(`${sheet}: autosave failed — ${e.message||e}`) }
+  }, SAVE_DELAY);
+}
+
+/* ====== Feeds ====== */
+async function loadPodcast(){
+  try{
+    const base = CFG.scriptUrl.replace(/#.*$/, "");
+    const j = await jsonp(base, { mode:'podcast', url: CFG.podcastRss }, 20000, 1);
+    if(!j || j.status!=="ok") throw new Error("Bad podcast JSONP");
+    rssPodcast = j.rows || [];
+    renderPodcastCard();
+    updateStats();
+    hideNotice();
+  } catch(e){ showNotice("Podcast load failed: "+(e.message||e)) }
+}
+async function loadYouTube(){
+  try{
+    if(!CFG.ytChannel){
+      const list = $("#ytList");
+      const sk = $("#ytSkeleton");
+      if (sk) sk.classList.add("hidden");
+      if (list) {
+        list.classList.remove("hidden");
+        list.innerHTML = `<div class="text-dim">Set your YouTube Channel ID in Settings to load the feed.</div>`;
+      }
+      $("#ytBadge").textContent="—";
+      return;
+    }
+    const base = CFG.scriptUrl.replace(/#.*$/, "");
+    const j = await jsonp(base, { mode:'yt', channel: CFG.ytChannel }, 20000, 1);
+    if(!j || j.status!=="ok") throw new Error("Bad YT JSONP");
+    rssYouTube = j.rows || [];
+    renderYouTubeCard();
+    updateStats();
+    hideNotice();
+  } catch(e){ showNotice("YouTube load failed: "+(e.message||e)) }
+}
+
+/* ====== Dashboard renderers ====== */
+function renderPodcastCard(){
+  const box = $("#podcastList");
+  const sk  = $("#podcastSkeleton");
+  if (sk) sk.classList.add("hidden");
+  if (box) box.classList.remove("hidden");
+
+  $("#podcastBadge").textContent = rssPodcast.length ? "Live" : "—";
+  const statEl = document.getElementById("statEpisodes");
+  if (statEl) statEl.textContent = String(rssPodcast.length || 0);
+
+  if (!box) return;
+  box.innerHTML = (rssPodcast.slice(0,30).map(e=>`
+    <div class="border border-[#1E2A33] rounded-lg p-3">
+      <div class="flex items-center justify-between">
+        <div class="font-semibold">${htmlesc(e.title)}</div>
+        <div class="text-xs text-dim">${fmtDate(e.pubDate)}</div>
+      </div>
+      <div class="text-sm mt-1 line-clamp-3">${htmlesc((e.desc||"").replace(/<!\[CDATA\[|\]\]>/g,""))}</div>
+      <a target="_blank" class="underline text-[#1193b8] text-sm mt-2 inline-block" href="${e.link||"#"}">Open</a>
+    </div>`).join(""));
+}
+function renderYouTubeCard(){
+  const box = $("#ytList");
+  const sk  = $("#ytSkeleton");
+  if (sk) sk.classList.add("hidden");
+  if (box) box.classList.remove("hidden");
+
+  $("#ytBadge").textContent = rssYouTube.length ? "Live" : "—";
+  const statEl = document.getElementById("statYT");
+  if (statEl) statEl.textContent = String(rssYouTube.length || 0);
+
+  if (!box) return;
+  box.innerHTML = (rssYouTube.slice(0,30).map(v=>`
+    <div class="border border-[#1E2A33] rounded-lg p-3 flex flex-col justify-between">
+      <div class="flex items-center justify-between gap-2">
+        <div class="font-semibold text-sm line-clamp-3" title="${htmlesc(v.title)}">${htmlesc(v.title)}</div>
+        <div class="text-[11px] text-dim whitespace-nowrap">${fmtDate(v.published)}</div>
+      </div>
+      <div class="mt-2">
+        <a target="_blank" href="${v.link}">
+          <img class="border border-[#1E2A33]" src="${v.thumb}" alt="">
+        </a>
+      </div>
+      <a target="_blank" class="underline text-[#1193b8] text-xs mt-2 inline-flex items-center gap-1" href="${v.link}">Watch</a>
+    </div>`).join(""));
+}
+
+/* ====== Schemas ====== */
+const SCHEMA = {
+  Podcast:      ["Title","Guest","Status","Planned","Notes","LastEditedBy"],
+  YouTube:      ["Title","Link","Status","Planned","Thumbnail","Notes","LastEditedBy"],
+  LinkedIn:     ["Title","Type","Status","Planned","Link","Notes","LastEditedBy"],
+  MattsRequests:["Request","Priority","Status","Owner","DueDate","Notes","LastEditedBy"],
+      Training: [
+    "TrainingType",
+    "ModuleName",
+    "LessonTitle",
+    "Owner",
+    "Status",
+    "Planned",
+    "Progress",
+    "Notes",
+    "LastEditedBy",
+  ],
+  Ideas:        ["Idea","Category","Author","Created","Notes"],
+    Drone: [
+    "Title",
+    "Site",
+    "FlightType",
+    "Pilot",
+    "Category",            // Open / Specific
+    "Subcategory",         // A1 / A2 / A3 / GVC / STS etc.
+    "DroneModel",
+    "DroneClass",          // C0–C4 / Legacy
+    "MTOMkg",              // Max take-off mass
+    "FRZRequired",         // Yes / No / Unknown
+    "FRZPermission",       // Yes / No / N/A
+    "LandownerPermission", // Yes / No / N/A
+    "RiskLevel",           // Low / Medium / High
+    "OpsType",             // VLOS / EVLOS / BVLOS
+    "MaxAltitudem",        // planned max altitude
+    "Status",
+    "Planned",
+    "DocsLink",
+    "Notes",
+    "LastEditedBy"
+  ],
+};
+function defaultRowFor(sheet){
+  const r = {}; (SCHEMA[sheet]||[]).forEach(k=>r[k]="");
+
+  if (r["LastEditedBy"] !== undefined) r["LastEditedBy"] = CFG.currentUser;
+
+  if (sheet === "MattsRequests" && r["Priority"] !== undefined) {
+    r["Priority"] = "Medium";
+    if (r["Status"] !== undefined) r["Status"] = "Idea";
+  }
+
+     if (sheet === "Training") {
+    if (r["TrainingType"] !== undefined) r["TrainingType"] = "BIMTheory";
+    if (r["Status"]       !== undefined) r["Status"]       = "Script Adaption";
+    if (r["Progress"]     !== undefined) r["Progress"]     = "0%";
+  }
+
+  if (sheet === "Ideas") {
+    r.Author  = CFG.currentUser;
+    r.Created = new Date().toISOString().slice(0,10);
+    r.Status  = "Idea";
+  }
+
+    if (sheet === "Drone") {
+    if (r["Status"]              !== undefined) r["Status"]              = "Planned";
+    if (r["Planned"]             !== undefined) r["Planned"]             = new Date().toISOString().slice(0,10);
+    if (r["Pilot"]               !== undefined) r["Pilot"]               = CFG.currentUser;
+    if (r["Category"]            !== undefined) r["Category"]            = "Open";
+    if (r["Subcategory"]         !== undefined) r["Subcategory"]         = "A2";
+    if (r["DroneModel"]          !== undefined) r["DroneModel"]          = "";
+    if (r["DroneClass"]          !== undefined) r["DroneClass"]          = "";
+    if (r["MTOMkg"]              !== undefined) r["MTOMkg"]              = "";
+    if (r["FRZRequired"]         !== undefined) r["FRZRequired"]         = "Unknown";
+    if (r["FRZPermission"]       !== undefined) r["FRZPermission"]       = "No";
+    if (r["LandownerPermission"] !== undefined) r["LandownerPermission"] = "No";
+    if (r["RiskLevel"]           !== undefined) r["RiskLevel"]           = "Medium";
+    if (r["OpsType"]             !== undefined) r["OpsType"]             = "VLOS";
+    if (r["MaxAltitudem"]        !== undefined) r["MaxAltitudem"]        = "120";
+  }
+
+  return r;
+}
+
+/* ====== Matt's filter state ====== */
+let mattsFilter = "all"; // "all" | "high" | "week" | "overdue"
+
+/* ====== Matt's Requests: board config ====== */
+const REQ_VIEW_KEY = "mreq_view"; // "table" | "board"
+const REQUEST_BUCKETS = [
+  { key:"Backlog",     match:/idea|backlog|todo/i },
+  { key:"In Progress", match:/in progress|doing|recording|editing/i },
+  { key:"Review",      match:/review/i },
+  { key:"Blocked",     match:/blocked/i },
+  { key:"Completed",   match:/completed|done|archived/i },
+];
+
+function bucketForStatus(status){
+  const s = String(status||"").trim();
+  for (const b of REQUEST_BUCKETS) if (b.match.test(s)) return b.key;
+  // default bucket:
+  if (/^completed|done|archived$/i.test(s)) return "Completed";
+  if (/^review$/i.test(s)) return "Review";
+  if (/^in progress|editing|recording$/i.test(s)) return "In Progress";
+  if (/^blocked$/i.test(s)) return "Blocked";
+  return "Backlog";
+}
+
+/* ====== Podcast: board config ====== */
+const POD_VIEW_KEY = "pod_view"; // "table" | "board"
+const POD_BUCKETS = [
+  { key: "Idea",              match: /^idea$/i },
+  { key: "Scheduled",         match: /scheduled(?!.*go-live)/i },
+  { key: "Edited",            match: /recorded|recording|editing|review/i },
+  { key: "Scheduled Go-Live", match: /scheduled go-live|go-live/i },
+  { key: "Published",         match: /published|completed|done|archived/i },
+];
+
+function podcastBucketForStatus(status) {
+  const s = String(status || "").trim();
+  for (const b of POD_BUCKETS) {
+    if (b.match.test(s)) return b.key;
+  }
+  if (!s) return "Idea";
+  if (/go-live/i.test(s)) return "Scheduled Go-Live";
+  if (/recorded|recording|editing|review/i.test(s)) return "Edited";
+  if (/scheduled/i.test(s)) return "Scheduled";
+  return "Published";
+}
+
+/* ====== YouTube: board config ====== */
+const YT_VIEW_KEY = "yt_view"; // "table" | "board"
+const YT_BUCKETS = [
+  { key: "Idea",             match: /^idea$/i },
+  { key: "Scheduled",        match: /scheduled(?!.*upload)/i },
+  { key: "Edited",           match: /editing|review/i },
+  { key: "Scheduled Upload", match: /scheduled upload/i },
+  { key: "Uploaded",         match: /uploaded|completed|done|archived/i },
+];
+
+function youtubeBucketForStatus(status) {
+  const s = String(status || "").trim();
+  for (const b of YT_BUCKETS) {
+    if (b.match.test(s)) return b.key;
+  }
+  if (!s) return "Idea";
+
+  if (/upload/i.test(s)) {
+    if (/scheduled/i.test(s)) return "Scheduled Upload";
+    return "Uploaded";
+  }
+
+  if (/editing|review/i.test(s)) return "Edited";
+  if (/scheduled/i.test(s)) return "Scheduled";
+
+  // Default completed-ish bucket
+  return "Uploaded";
+}
+
+/* ====== Training: board config ====== */
+const TRAIN_VIEW_KEY = "training_view"; // "table" | "board"
+
+const TRAINING_BUCKETS = [
+  {
+    key: "Scripting & Design",
+    match: /(script adaption|script review|storyboarding)/i,
+  },
+  {
+    key: "Production",
+    match: /(voiceover recording|asset creation|animation)/i,
+  },
+  {
+    key: "Review",
+    match: /internal review( 2)?/i,
+  },
+  {
+    key: "Delivery",
+    match: /(final render & export|upload & lms integration|completed|done)/i,
+  },
+];
+
+function trainingBucketForStatus(status) {
+  const s = String(status || "").trim();
+  if (!s) return "Scripting & Design";
+
+  for (const b of TRAINING_BUCKETS) {
+    if (b.match.test(s)) return b.key;
+  }
+
+  // Fallback: keep unknowns in earliest stage so they don't disappear
+  return "Scripting & Design";
+}
+
+/* ====== LinkedIn: board config ====== */
+const LI_VIEW_KEY = "li_view"; // "table" | "board"
+const LI_BUCKETS = [
+  { key: "Idea",             match: /^idea$/i },
+  { key: "Designing/Editing",match: /mock-up|designing\/editing|editing|review/i },
+  { key: "Scheduled Upload", match: /scheduled post|scheduled upload/i },
+  { key: "Uploaded",         match: /posted|uploaded|completed|done|archived/i },
+];
+
+function linkedinBucketForStatus(status) {
+  const s = String(status || "").trim();
+  for (const b of LI_BUCKETS) {
+    if (b.match.test(s)) return b.key;
+  }
+  if (!s) return "Idea";
+
+  if (/posted|uploaded|completed|done|archived/i.test(s)) return "Uploaded";
+  if (/scheduled post|scheduled upload/i.test(s)) return "Scheduled Upload";
+  if (/mock-up|designing\/editing|editing|review/i.test(s)) return "Designing/Editing";
+
+  return "Idea";
+}
+
+function prioBadgeClass(p){
+  const v = String(p||"").toLowerCase();
+  if (v==="high") return "badge-prio-high";
+  if (v==="medium") return "badge-prio-med";
+  if (v==="low") return "badge-prio-low";
+  return "";
+}
+
+function dueBadgeState(dueStr){
+  if (!dueStr) return { cls:"", label:"No date" };
+  const d = parseDateFlexible(dueStr);
+  if (isNaN(d)) return { cls:"", label:"—" };
+  const today = new Date(); today.setHours(0,0,0,0);
+  const week  = new Date(today); week.setDate(week.getDate()+7);
+  if (d < today) return { cls:"overdue", label:"Overdue" };
+  if (d <= week) return { cls:"soon", label:"Due ≤7d" };
+  return { cls:"ok", label:"Scheduled" };
+}
+
+// === DRONE helpers (no full re-render while typing) ===
+function droneComputeFlags(row){
+  const alt  = parseFloat(row.MaxAltitudem || row.MaxAltitude || "");
+  const frzR = String(row.FRZRequired || "").toLowerCase();
+  const frzP = String(row.FRZPermission || "").toLowerCase();
+  const risk = String(row.RiskLevel || "").toLowerCase();
+
+  const highAlt = !isNaN(alt) && alt > 120;
+  const needsFRZ = frzR === "yes";
+  const hasFRZ = frzP === "yes";
+
+  const warning  = needsFRZ && !hasFRZ;     // needs FRZ but no permission yet
+  const highrisk = highAlt || risk === "high";
+
+  return { warning, highrisk };
+}
+
+// Apply classes to a single <tr> based on current row data
+function droneApplyRowClasses(tr, row){
+  if (!tr) return;
+  tr.classList.remove("row-drone-highrisk","row-drone-warning");
+  const f = droneComputeFlags(row);
+  if (f.highrisk) tr.classList.add("row-drone-highrisk");
+  else if (f.warning) tr.classList.add("row-drone-warning");
+}
+
+/* ====== Generic Grid (with Priority tint & Training progress) ====== */
+function renderGrid(sheet){
+  // Ideas have their own special renderer
+  if (sheet === "Ideas") {
+    renderIdeas();
+    return;
+  }
+
+  const grid = document.querySelector(`[data-grid="${sheet}"]`);
+  const all  = plannerCache[sheet] || [];
+  const qEl  = document.querySelector(`[data-search="${sheet}"]`);
+  const q    = (qEl?.value || "").toLowerCase().trim();
+
+    let rows = all;
+
+  // Matt’s Requests quick filters
+  if (sheet === "MattsRequests") {
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    const endOfWeek = new Date(today);
+    endOfWeek.setDate(endOfWeek.getDate() + 7);
+
+    // 1) Apply Matt's filter (all / high / week / overdue)
+    rows = rows.filter(r=>{
+      const due = parseDateFlexible(r.DueDate);
+      const hasDue = !isNaN(due);
+
+      switch (mattsFilter) {
+        case "high":
+          return String(r.Priority||"").toLowerCase() === "high";
+        case "week":
+          return hasDue && due >= today && due <= endOfWeek;
+        case "overdue":
+          return hasDue && due < today && !isCompletedStatus(r.Status);
+        default:
+          return true;
+      }
+    });
+
+    // 2) For the TABLE view: hide completed/done/archived rows entirely.
+    //    They will still appear on the Matt's Requests board.
+    rows = rows.filter(r => !isCompletedStatus(r.Status));
+  }
+
+  // Podcast: hide completed / archived episodes from the TABLE view.
+  // They will still appear on the Podcast board.
+  if (sheet === "Podcast") {
+    rows = rows.filter(r => !isPodcastBoardOnlyStatus(r.Status));
+  }
+
+  // YouTube: hide uploaded / archived videos from the TABLE view.
+  // They will still appear on the YouTube board.
+  if (sheet === "YouTube") {
+    rows = rows.filter(r => !isYouTubeBoardOnlyStatus(r.Status));
+  }
+
+  // LinkedIn: hide posted / archived posts from the TABLE view.
+  // They will still appear on the LinkedIn board.
+  if (sheet === "LinkedIn") {
+    rows = rows.filter(r => !isLinkedInBoardOnlyStatus(r.Status));
+  }
+
+  // Search filter after quick filter
+  rows = q
+    ? rows.filter(r => Object.values(r).join(" ").toLowerCase().includes(q))
+    : rows;
+
+  const today = new Date();
+
+  // Build table header
+  const thead = `<thead><tr>${
+    (SCHEMA[sheet] || []).map(h => `<th>${h}</th>`).join("")
+  }<th></th></tr></thead>`;
+
+  // Build rows
+  const tbody = `<tbody>` + rows.map(r => {
+    const ridx = all.indexOf(r);
+
+    // Overdue highlighting (Matt’s Requests)
+    const isOverdueRow =
+      sheet === "MattsRequests" &&
+      r.DueDate &&
+      parseDateFlexible(r.DueDate) < today &&
+      !/completed|done/i.test(r.Status || "");
+
+    // Priority tinting (Matt’s Requests)
+    let prioClass = "";
+    if (sheet === "MattsRequests") {
+      const p = String(r.Priority || "").toLowerCase();
+      if (p === "high")   prioClass = "row-prio-high";
+      else if (p === "medium") prioClass = "row-prio-med";
+      else if (p === "low")    prioClass = "row-prio-low";
+    }
+
+    // Drone risk classes (computed via helper)
+const isDrone = sheet === "Drone";
+let droneWarning = false;
+let droneHighRisk = false;
+if (isDrone) {
+  const f = droneComputeFlags(r);
+  droneWarning  = f.warning;
+  droneHighRisk = f.highrisk;
+}
+
+    const rowClass = [
+      isOverdueRow ? "row-overdue" : null,
+      prioClass,
+      droneHighRisk ? "row-drone-highrisk" : null,
+      (!droneHighRisk && droneWarning) ? "row-drone-warning" : null,
+    ].filter(Boolean).join(" ");
+
+    // Build <td> cells
+    const cells = (SCHEMA[sheet] || []).map(h => {
+      const isDate = /^(Planned|DueDate|Created)$/.test(h);
+      const isNumber = sheet === "Drone" && (h === "MTOMkg" || h === "MaxAltitudem");
+      const inputValue = isDate ? toInputDate(r[h]) : (r[h] ?? "");
+
+      // Matt’s Requests: Priority select
+      if (sheet === "MattsRequests" && h === "Priority") {
+        const opts = ["High", "Medium", "Low"];
+        return `<td>
+          <select data-k="${h}" data-i="${ridx}">
+            ${opts.map(o => `<option ${String(r[h] || "") === o ? "selected" : ""}>${o}</option>`).join("")}
+          </select>
+        </td>`;
+      }
+
+      // Training: TrainingType dropdown
+      if (sheet === "Training" && h === "TrainingType") {
+        const typeOptions = [
+          "BIMTheory",
+          "BIMSkills",
+          "Recruitment",
+          "Drone",
+          "BIM",
+          "Soft Skills",
+          "Other",
+        ];
+        return `<td>
+          <select data-k="${h}" data-i="${ridx}">
+            ${typeOptions
+              .map(o => `<option ${String(r[h] || "") === o ? "selected" : ""}>${o}</option>`)
+              .join("")}
+          </select>
+        </td>`;
+      }
+
+            // Status selects (with colour)
+      if (h === "Status") {
+        let statusOptions;
+        if (sheet === "Training") {
+          statusOptions = [
+            "Script Adaption",
+            "Script Review",
+            "Storyboarding",
+            "Internal Review",
+            "Voiceover Recording",
+            "Asset Creation",
+            "Animation",
+            "Internal Review 2",
+            "Final Render & Export",
+            "Upload & LMS Integration",
+          ];
+        } else if (sheet === "Podcast") {
+          // Podcast-specific flow
+          statusOptions = [
+            "Idea",
+            "Scheduled",
+            "Recorded",
+            "Editing",
+            "Review",
+            "Scheduled Go-Live",
+            "Published",
+            "Archived"
+          ];
+        } else if (sheet === "YouTube") {
+          // YouTube-specific flow
+          statusOptions = [
+            "Idea",
+            "Scheduled",
+            "Editing",
+            "Review",
+            "Scheduled Upload",
+            "Uploaded",
+            "Archived"
+          ];
+} else if (sheet === "LinkedIn") {
+        statusOptions = [
+          "Idea",
+          "Mock-Up",
+          "Designing/Editing",
+          "Review",
+          "Scheduled Post",
+          "Posted",
+          "Archived"
+        ]
+        } else {
+          statusOptions = [
+            "Idea","Scheduled","Recording","Editing","Review",
+            "Uploading","Scheduled Go-Live","Published","Archived",
+            "Completed","Planned","In Progress"
+          ];
+        }
+        const current = String(r[h] || "");
+        return `<td>
+          <select data-k="${h}" data-i="${ridx}" class="statusSel ${statusClass(r[h])}">
+            ${statusOptions.map(s => `<option ${current === s ? "selected" : ""}>${s}</option>`).join("")}
+          </select>
+        </td>`;
+      }
+
+      // Drone: UK-specific select fields
+      if (sheet === "Drone" && ["Category","Subcategory","FRZRequired","FRZPermission","LandownerPermission","RiskLevel","OpsType"].includes(h)) {
+        const map = {
+          Category:            ["Open","Specific"],
+          Subcategory:         ["A1","A2","A3","GVC","STS","PDRA"],
+          FRZRequired:         ["Unknown","Yes","No"],
+          FRZPermission:       ["No","Yes","N/A"],
+          LandownerPermission: ["No","Yes","N/A"],
+          RiskLevel:           ["Low","Medium","High"],
+          OpsType:             ["VLOS","EVLOS","BVLOS"],
+        };
+        const opts = map[h] || [];
+        const current = String(r[h] || "");
+        return `<td>
+          <select data-k="${h}" data-i="${ridx}">
+            ${opts.map(o => `<option ${current === o ? "selected" : ""}>${o}</option>`).join("")}
+          </select>
+        </td>`;
+      }
+
+      // Default input
+      return `<td>
+        <input
+          ${isDate ? 'type="date"' : (isNumber ? 'type="number" step="0.1"' : 'type="text"')}
+          data-k="${h}"
+          data-i="${ridx}"
+          value="${htmlesc(inputValue)}"
+        >
+      </td>`;
+    }).join("");
+
+    // Extra action column (done / delete)
+    const actions = `<td class="text-right space-x-1">
+      ${sheet === "MattsRequests"
+        ? `<button class="btn btn-outline text-xs" data-done="${ridx}" title="Mark completed">✅</button>`
+        : ""
+      }
+      <button class="btn btn-outline text-xs" data-del="${ridx}">🗑</button>
+    </td>`;
+
+    return `<tr class="${rowClass}" ${isOverdueRow ? 'title="Overdue"' : ""}>${cells}${actions}</tr>`;
+  }).join("") + `</tbody>`;
+
+  if (!grid) return;
+
+  grid.innerHTML = `<div class="overflow-x-auto"><table>${thead}${tbody}</table></div>`;
+
+  // Wire up inputs & selects
+  grid.querySelectorAll("input,select").forEach(el => {
+    el.addEventListener("input", () => {
+      if (!ensureSheetReady(sheet)) return;
+
+      const i = +el.dataset.i;
+      const k = el.dataset.k;
+      let v = el.value;
+
+      if (/^(Planned|DueDate|Created)$/.test(k)) {
+        plannerCache[sheet][i][k] = toSheetDate(v);
+      } else {
+        let newStatus = v.trim();
+
+// Standardise synonyms
+if (/^(done|complete|completed|finished)$/i.test(newStatus)) {
+  newStatus = "Completed";
+}
+
+plannerCache[sheet][i][k] = newStatus;
+      }
+
+      // Update LastEditedBy if present
+      if (plannerCache[sheet][i]["LastEditedBy"] !== undefined) {
+        plannerCache[sheet][i]["LastEditedBy"] = CFG.currentUser;
+      }
+
+      // Status colour + Training progress auto-update
+      if (k === "Status") {
+        if (el.classList.contains("statusSel")) {
+          el.className = "statusSel " + statusClass(v);
+        }
+
+        if (sheet === "Training") {
+          const map = TRAINING_PROGRESS;
+          const progress = map[v] || plannerCache.Training[i].Progress || "";
+          if (progress) {
+            plannerCache.Training[i].Progress = progress;
+            const progInput = grid.querySelector(`input[data-k="Progress"][data-i="${i}"]`);
+            if (progInput) progInput.value = progress;
+          }
+        }
+      }
+
+      // YouTube: derive thumbnail + title from link
+      if (sheet === "YouTube" && k === "Link") {
+        const id = extractYouTubeId(v);
+        if (id) {
+          if (!plannerCache.YouTube[i].Thumbnail) {
+            plannerCache.YouTube[i].Thumbnail = `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
+            const thumbInput = grid.querySelector(`input[data-k="Thumbnail"][data-i="${i}"]`);
+            if (thumbInput && !thumbInput.value) thumbInput.value = plannerCache.YouTube[i].Thumbnail;
+          }
+          if (!plannerCache.YouTube[i].Title) {
+            plannerCache.YouTube[i].Title = `Video ${id}`;
+            const titleInput = grid.querySelector(`input[data-k="Title"][data-i="${i}"]`);
+            if (titleInput && !titleInput.value) titleInput.value = plannerCache.YouTube[i].Title;
+          }
+        }
+      }
+
+      // Drone: live risk highlighting + summary, without re-rendering the whole grid
+      if (sheet === "Drone") {
+        const row = plannerCache.Drone[i];
+        const tr = el.closest("tr");
+        if (tr) {
+          updateDroneRowClasses(tr, row);
+        }
+
+        if (k === "MaxAltitudem") {
+          const alt = parseFloat(v);
+          if (!isNaN(alt) && alt > 120) {
+            showNotice("Warning: planned altitude > 120 m AGL — check UK CAA limits / specific authorisation.");
+          }
+        }
+
+        updateDroneSummary();
+      }
+
+      // Matt’s Requests: changing priority should re-render to refresh tint + filters
+      if (sheet === "MattsRequests" && k === "Priority") {
+        renderGrid("MattsRequests");
+      }
+
+      // Autosave + dashboards
+      queueAutoSave(sheet);
+      updateStats();
+      renderCalendar();
+      renderMiniCalendar();
+      renderUpcomingShort();
+      renderMattPreview();
+      renderTodayFocus();
+
+// Matt's Requests: Status → completed/done/archived
+    if (sheet === "MattsRequests" && k === "Status" && isCompletedStatus(v)) {
+      renderGrid("MattsRequests");
+      renderRequestsBoard();
+      queueAutoSave("MattsRequests");
+      updateStats();
+      renderCalendar();
+      renderMiniCalendar();
+      renderUpcomingShort();
+      renderMattPreview();
+      renderTodayFocus();
+      return;
+    }
+    });
+  });
+
+  // Matt’s Requests "done" buttons
+  if (sheet === "MattsRequests") {
+    grid.querySelectorAll("[data-done]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        if (!ensureSheetReady("MattsRequests")) return;
+        const i = +btn.dataset.done;
+        if (!plannerCache.MattsRequests[i]) return;
+        plannerCache.MattsRequests[i].Status = "Completed";
+        renderGrid("MattsRequests");
+        queueAutoSave("MattsRequests");
+        updateStats();
+        renderCalendar();
+        renderMiniCalendar();
+        renderUpcomingShort();
+        renderMattPreview();
+        renderTodayFocus();
+      });
+    });
+  }
+
+  // All sheets: delete row
+  grid.querySelectorAll("[data-del]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    if (!ensureSheetReady("Ideas")) return;
+    const i = +btn.dataset.del;
+    if (isNaN(i) || !plannerCache.Ideas[i]) return;
+
+    plannerCache.Ideas.splice(i, 1);
+    renderIdeas();
+    renderIdeasPreview();   // 👈 add this
+    queueAutoSave("Ideas");
+    updateStats();
+    renderCalendar();
+    renderMiniCalendar();
+    renderUpcomingShort();
+    renderMattPreview();
+    renderTodayFocus();
+  });
+});
+
+  // After initial render, make sure Drone summary chips are correct
+  if (sheet === "Drone") {
+    updateDroneSummary();
+  }
+}
+
+/* ====== Drone helpers (row classes + summary chips) ====== */
+function updateDroneRowClasses(tr, row){
+  if (!tr || !row) return;
+
+  const maxAlt = parseFloat(row.MaxAltitudem || row.MaxAltitude || "");
+  const frzReq = String(row.FRZRequired || "").toLowerCase();
+  const frzPerm = String(row.FRZPermission || "").toLowerCase();
+  const risk = String(row.RiskLevel || "").toLowerCase();
+
+  let droneWarning = false;
+  let droneHighRisk = false;
+
+  if (!isNaN(maxAlt) && maxAlt > 120) {
+    droneHighRisk = true;
+  }
+  if (frzReq === "yes" && frzPerm !== "yes") {
+    droneWarning = true;
+  }
+  if (risk === "high") {
+    droneHighRisk = true;
+  }
+
+  tr.classList.remove("row-drone-warning","row-drone-highrisk");
+
+  if (droneHighRisk) {
+    tr.classList.add("row-drone-highrisk");
+  } else if (droneWarning) {
+    tr.classList.add("row-drone-warning");
+  }
+}
+
+function updateDroneSummary(){
+  const rows = plannerCache.Drone || [];
+
+  let frzMissing = 0;   // FRZ required but no permission
+  let highRisk = 0;     // high risk level or >120 m
+
+  rows.forEach(r => {
+    const frzReq = String(r.FRZRequired || "").toLowerCase();
+    const frzPerm = String(r.FRZPermission || "").toLowerCase();
+    const risk = String(r.RiskLevel || "").toLowerCase();
+    const maxAlt = parseFloat(r.MaxAltitudem || r.MaxAltitude || "");
+
+    if (frzReq === "yes" && frzPerm !== "yes") {
+      frzMissing++;
+    }
+    if (risk === "high" || (!isNaN(maxAlt) && maxAlt > 120)) {
+      highRisk++;
+    }
+  });
+
+  // These spans are optional – only update them if they exist in the HTML
+  const frzEl  = document.getElementById("droneFrzMissing");
+  const riskEl = document.getElementById("droneHighRisk");
+
+  if (frzEl)  frzEl.textContent  = frzMissing;
+  if (riskEl) riskEl.textContent = highRisk;
+}
+
+function renderRequestsBoard(){
+  const wrap = document.getElementById("requestsBoardWrap");
+  if (!wrap) return;
+
+  const all = plannerCache.MattsRequests || [];
+  const qEl = document.querySelector('[data-search="MattsRequests"]');
+  const q   = (qEl?.value || "").toLowerCase().trim();
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const endOfWeek = new Date(today); endOfWeek.setDate(endOfWeek.getDate()+7);
+
+  let rows = all.filter(r=>{
+    const due = parseDateFlexible(r.DueDate);
+    const hasDue = !isNaN(due);
+    let pass = true;
+    if (mattsFilter === "high")    pass = String(r.Priority||"").toLowerCase()==="high";
+    if (mattsFilter === "week")    pass = hasDue && due >= today && due <= endOfWeek;
+    if (mattsFilter === "overdue") pass = hasDue && due < today && !/completed|done|archived/i.test(r.Status||"");
+    if (q) pass = pass && Object.values(r).join(" ").toLowerCase().includes(q);
+    return pass;
+  });
+
+  const openCount   = rows.filter(r=>!/^completed|done|archived$/i.test(r.Status||"")).length;
+  const highCount   = rows.filter(r=>String(r.Priority||"").toLowerCase()==="high").length;
+  const weekCount   = rows.filter(r=>{ const d=parseDateFlexible(r.DueDate); return !isNaN(d) && d>=today && d<=endOfWeek; }).length;
+  const overdueCount= rows.filter(r=>{ const d=parseDateFlexible(r.DueDate); return !isNaN(d) && d<today && !/completed|done|archived/i.test(r.Status||""); }).length;
+  const setChip = (id,val)=>{ const el=document.getElementById(id); if(el) el.textContent = String(val); };
+  setChip("reqChipOpen", openCount);
+  setChip("reqChipHigh", highCount);
+  setChip("reqChipWeek", weekCount);
+  setChip("reqChipOverdue", overdueCount);
+
+  const groups = new Map();
+  REQUEST_BUCKETS.forEach(b=>groups.set(b.key, []));
+  rows.forEach(r => groups.get(bucketForStatus(r.Status)).push(r));
+
+  wrap.innerHTML = "";
+  REQUEST_BUCKETS.forEach(b=>{
+    const col = document.createElement("div");
+    col.className = "board-col";
+
+    const header = document.createElement("header");
+    header.innerHTML = `<span class="title">${b.key}</span><span class="count">${groups.get(b.key).length}</span>`;
+    col.appendChild(header);
+
+    const list = document.createElement("div");
+    groups.get(b.key).forEach((r)=>{
+      const ridx = all.indexOf(r);
+      const due = dueBadgeState(r.DueDate);
+      const prioCls = prioBadgeClass(r.Priority);
+
+      const card = document.createElement("div");
+      card.className = "req-card";
+
+      const title = document.createElement("div");
+      title.className = "req-title";
+      title.textContent = r.Request || "(Request)";
+      card.appendChild(title);
+
+      const meta = document.createElement("div");
+      meta.className = "req-meta";
+      meta.innerHTML = `
+        <span class="req-badge ${due.cls}">${due.label}</span>
+        ${r.Priority ? `<span class="req-badge ${prioCls}">${r.Priority}</span>` : ""}
+        ${r.Owner ? `<span>👤 ${r.Owner}</span>` : ""}
+        ${r.DueDate ? `<span>🗓 ${fmtDate(r.DueDate)}</span>` : ""}
+      `;
+      card.appendChild(meta);
+
+      const actions = document.createElement("div");
+      actions.className = "req-actions";
+      actions.innerHTML = `
+        <select class="statusSel ${statusClass(r.Status)}" data-i="${ridx}" data-k="Status">
+          ${[
+            "Idea","Backlog","In Progress","Review","Blocked",
+            "Completed","Done","Archived"
+          ].map(s=>`<option ${String(r.Status||"")===s?"selected":""}>${s}</option>`).join("")}
+        </select>
+        <button class="btn btn-outline text-xs" data-done="${ridx}">✅ Done</button>
+      `;
+      card.appendChild(actions);
+
+      list.appendChild(card);
+    });
+
+    col.appendChild(list);
+    wrap.appendChild(col);
+  });
+
+  wrap.querySelectorAll('select[data-k="Status"]').forEach(sel=>{
+    sel.addEventListener("change", ()=>{
+      if (!ensureSheetReady("MattsRequests")) return;
+      const i = +sel.dataset.i;
+      plannerCache.MattsRequests[i].Status = sel.value;
+      queueAutoSave("MattsRequests");
+      renderRequestsBoard();
+      renderGrid("MattsRequests");
+      updateStats(); renderCalendar(); renderMiniCalendar(); renderUpcomingShort(); renderMattPreview(); renderTodayFocus();
+    });
+  });
+  wrap.querySelectorAll("[data-done]").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      if (!ensureSheetReady("MattsRequests")) return;
+      const i = +btn.dataset.done;
+      if (!plannerCache.MattsRequests[i]) return;
+      plannerCache.MattsRequests[i].Status = "Completed";
+      queueAutoSave("MattsRequests");
+      renderRequestsBoard();
+      renderGrid("MattsRequests");
+      updateStats(); renderCalendar(); renderMiniCalendar(); renderUpcomingShort(); renderMattPreview(); renderTodayFocus();
+    });
+  });
+}
+
+function renderPodcastBoard() {
+  const wrap = document.getElementById("podcastBoardWrap");
+  if (!wrap) return;
+
+  const all = plannerCache.Podcast || [];
+  const qEl = document.querySelector('[data-search="Podcast"]');
+  const q   = (qEl?.value || "").toLowerCase().trim();
+
+  // Search filter
+  let rows = all;
+  if (q) {
+    rows = rows.filter(r =>
+      Object.values(r)
+        .join(" ")
+        .toLowerCase()
+        .includes(q)
+    );
+  }
+
+  // Group into buckets
+  const groups = new Map();
+  POD_BUCKETS.forEach(b => groups.set(b.key, []));
+  rows.forEach(r => {
+    const bucketKey = podcastBucketForStatus(r.Status);
+    if (!groups.has(bucketKey)) groups.set(bucketKey, []);
+    groups.get(bucketKey).push(r);
+  });
+
+  wrap.innerHTML = "";
+
+  // Render columns
+  POD_BUCKETS.forEach(b => {
+    const col = document.createElement("div");
+    col.className = "board-col";
+
+    const header = document.createElement("header");
+    header.innerHTML =
+      `<span class="title">${b.key}</span>` +
+      `<span class="count">${groups.get(b.key).length}</span>`;
+    col.appendChild(header);
+
+    const list = document.createElement("div");
+
+    groups.get(b.key).forEach(r => {
+      const ridx = all.indexOf(r);
+      const title  = r.Title  || "(Untitled episode)";
+      const guest  = r.Guest  || "";
+      const notes  = r.Notes  || "";
+      const status = r.Status || "";
+      const badge  = dueBadgeState(r.Planned);
+      const plannedLabel = r.Planned ? fmtDate(r.Planned) : "No date";
+const lessonTitle   = r.LessonTitle || "(Untitled lesson)";
+      const moduleName    = r.ModuleName  || "";
+      const trainingType  = r.TrainingType || "";
+
+      const card = document.createElement("div");
+      card.className = "req-card";
+
+      card.innerHTML = `
+        <div class="req-title">${htmlesc(lessonTitle)}</div>
+        <div class="req-meta">
+          <span class="req-badge ${badge.cls}">${badge.label}</span>
+          ${r.Planned ? `<span>🗓 ${htmlesc(plannedLabel)}</span>` : ""}
+          ${moduleName ? `<span>📦 ${htmlesc(moduleName)}</span>` : ""}
+          ${trainingType ? `<span>🎓 ${htmlesc(trainingType)}</span>` : ""}
+        </div>
+
+        <div class="req-meta">
+          ${r.Owner ? `<span>🙋 ${htmlesc(r.Owner)}</span>` : ""}
+          ${r.Progress ? `<span>${htmlesc(r.Progress)}</span>` : ""}
+          ${status ? `<span class="status-pill ${statusClass(status)}">${htmlesc(status)}</span>` : ""}
+        </div>
+      `;
+
+      // Actions: status select + Done button (same pattern as Matt’s)
+      const actions = document.createElement("div");
+      actions.className = "req-actions";
+
+      const statusOptions = [
+        "Idea",
+        "Scheduled",
+        "Recorded",
+        "Editing",
+        "Review",
+        "Scheduled Go-Live",
+        "Published",
+        "Archived"
+      ];
+
+      actions.innerHTML = `
+        <select class="statusSel ${statusClass(status)}" data-i="${ridx}" data-k="Status">
+          ${statusOptions.map(s =>
+            `<option ${String(status || "") === s ? "selected" : ""}>${s}</option>`
+          ).join("")}
+        </select>
+        <button class="btn btn-outline text-xs" data-done="${ridx}">✅ Done</button>
+      `;
+
+      card.appendChild(actions);
+      list.appendChild(card);
+    });
+
+    col.appendChild(list);
+    wrap.appendChild(col);
+  });
+
+  // Wire up status changes on the board
+  wrap.querySelectorAll('select[data-k="Status"]').forEach(sel => {
+    sel.addEventListener("change", () => {
+      if (!ensureSheetReady("Podcast")) return;
+      const i = +sel.dataset.i;
+      if (!plannerCache.Podcast[i]) return;
+
+      plannerCache.Podcast[i].Status = sel.value;
+
+      queueAutoSave("Podcast");
+      renderPodcastBoard();   // refresh columns
+      renderGrid("Podcast");  // table will hide/show based on status
+      updateStats();
+      renderCalendar();
+      renderMiniCalendar();
+      renderUpcomingShort();
+      renderMattPreview();
+      renderTodayFocus();
+    });
+  });
+
+  // "✅ Done" on board sets status => Published (completed)
+  wrap.querySelectorAll("[data-done]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (!ensureSheetReady("Podcast")) return;
+      const i = +btn.dataset.done;
+      if (!plannerCache.Podcast[i]) return;
+
+      plannerCache.Podcast[i].Status = "Published";
+
+      queueAutoSave("Podcast");
+      renderPodcastBoard();
+      renderGrid("Podcast");
+      updateStats();
+      renderCalendar();
+      renderMiniCalendar();
+      renderUpcomingShort();
+      renderMattPreview();
+      renderTodayFocus();
+    });
+  });
+}
+
+function renderTrainingBoard() {
+  const wrap = document.getElementById("trainingBoardWrap");
+  if (!wrap) return;
+
+  // Don't block rendering while the sheet is still loading;
+  // just render empty columns and let data pop in once it arrives.
+  const all = Array.isArray(plannerCache.Training) ? plannerCache.Training : [];
+
+  const searchEl = document.querySelector('[data-search="Training"]');
+  const q = (searchEl?.value || "").toLowerCase().trim();
+
+  let rows = all;
+  if (q) {
+    rows = rows.filter(r =>
+      Object.values(r).join(" ").toLowerCase().includes(q)
+    );
+  }
+
+  // Bucket rows by pipeline stage
+  const groups = new Map();
+  TRAINING_BUCKETS.forEach(b => groups.set(b.key, []));
+  rows.forEach(r => {
+    const bucketKey = trainingBucketForStatus(r.Status);
+    if (!groups.has(bucketKey)) groups.set(bucketKey, []);
+    groups.get(bucketKey).push(r);
+  });
+
+  wrap.innerHTML = "";
+
+  TRAINING_BUCKETS.forEach(b => {
+    const col = document.createElement("div");
+    col.className = "board-col";
+
+    const groupRows = groups.get(b.key) || [];
+
+    const header = document.createElement("header");
+    header.innerHTML =
+      `<span class="title">${b.key}</span>` +
+      `<span class="count">${groupRows.length}</span>`;
+    col.appendChild(header);
+
+    const list = document.createElement("div");
+
+    groupRows.forEach(r => {
+  const idx = all.indexOf(r);
+
+  const moduleName   = r.ModuleName || "";
+  const lessonTitle  = r.LessonTitle || "";
+  const trainingType = r.TrainingType || "";
+
+  // Build a sensible title
+  let title;
+  if (moduleName && lessonTitle) {
+    title = `${moduleName}: ${lessonTitle}`;
+  } else if (lessonTitle) {
+    title = lessonTitle;
+  } else if (moduleName) {
+    title = moduleName;
+  } else {
+    // Fallback to TrainingType, then generic label
+    title = trainingType || "(Training)";
+  }
+
+  const status       = String(r.Status || "");
+  const plannedRaw   = r.Planned || r.DueDate || "";
+  const plannedBadge = dueBadgeState(plannedRaw);
+  const plannedLabel = plannedRaw ? fmtDate(plannedRaw) : "";
+
+  const card = document.createElement("div");
+  card.className = "req-card";
+
+  card.innerHTML = `
+    <div class="req-title">${htmlesc(title)}</div>
+
+    <div class="req-meta">
+      ${plannedLabel ? `<span class="req-badge ${plannedBadge.cls}">${plannedBadge.label}</span>` : ""}
+      ${plannedLabel ? `<span>🗓 ${htmlesc(plannedLabel)}</span>` : ""}
+      ${trainingType ? `<span>🎓 ${htmlesc(trainingType)}</span>` : ""}
+      ${moduleName ? `<span>📦 ${htmlesc(moduleName)}</span>` : ""}
+    </div>
+
+    <div class="req-meta">
+      ${r.Owner ? `<span>🙋 ${htmlesc(r.Owner)}</span>` : ""}
+      ${r.Progress ? `<span>${htmlesc(r.Progress)}</span>` : ""}
+      ${status ? `<span class="status-pill ${statusClass(status)}">${htmlesc(status)}</span>` : ""}
+    </div>
+  `;
+
+      const actions = document.createElement("div");
+      actions.className = "req-actions";
+
+      const statusOptions = [
+        "Script Adaption",
+        "Script Review",
+        "Storyboarding",
+        "Internal Review",
+        "Voiceover Recording",
+        "Asset Creation",
+        "Animation",
+        "Internal Review 2",
+        "Final Render & Export",
+        "Upload & LMS Integration",
+        "Completed",
+      ];
+
+      actions.innerHTML = `
+        <select class="statusSel ${statusClass(status)}" data-i="${idx}" data-k="Status">
+          ${statusOptions
+            .map(s => `<option ${status === s ? "selected" : ""}>${s}</option>`)
+            .join("")}
+        </select>
+        <button class="btn btn-outline text-xs" data-done="${idx}">✅ Done</button>
+      `;
+
+      card.appendChild(actions);
+      list.appendChild(card);
+    });
+
+    col.appendChild(list);
+    wrap.appendChild(col);
+  });
+
+  // Wire up status changes
+  wrap.querySelectorAll('select[data-k="Status"]').forEach(sel => {
+    sel.addEventListener("change", () => {
+      if (!ensureSheetReady("Training")) return;
+      const i = +sel.dataset.i;
+      if (!plannerCache.Training[i]) return;
+
+      const newStatus = sel.value;
+      plannerCache.Training[i].Status = newStatus;
+
+      // Keep Progress in sync with the pipeline mapping
+      const map = TRAINING_PROGRESS;
+      const progress = map[newStatus] || plannerCache.Training[i].Progress || "";
+      if (progress) {
+        plannerCache.Training[i].Progress = progress;
+      }
+
+      queueAutoSave("Training");
+      renderTrainingBoard();
+      renderGrid("Training");
+      updateStats();
+      renderCalendar();
+      renderMiniCalendar();
+      renderUpcomingShort();
+      renderMattPreview();
+      renderTodayFocus();
+    });
+  });
+
+  // "Done" button = jump to Upload & LMS Integration
+  wrap.querySelectorAll("[data-done]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (!ensureSheetReady("Training")) return;
+      const i = +btn.getAttribute("data-done");
+      if (!plannerCache.Training[i]) return;
+
+      plannerCache.Training[i].Status = "Upload & LMS Integration";
+      const map = TRAINING_PROGRESS;
+      plannerCache.Training[i].Progress =
+        map["Upload & LMS Integration"] || "100%";
+
+      queueAutoSave("Training");
+      renderTrainingBoard();
+      renderGrid("Training");
+      updateStats();
+      renderCalendar();
+      renderMiniCalendar();
+      renderUpcomingShort();
+      renderMattPreview();
+      renderTodayFocus();
+    });
+  });
+}
+
+function renderYouTubeBoard() {
+  const wrap = document.getElementById("youtubeBoardWrap");
+  if (!wrap) return;
+
+  const all = plannerCache.YouTube || [];
+  const qEl = document.querySelector('[data-search="YouTube"]');
+  const q   = (qEl?.value || "").toLowerCase().trim();
+
+  // Search filter
+  let rows = all;
+  if (q) {
+    rows = rows.filter(r =>
+      Object.values(r)
+        .join(" ")
+        .toLowerCase()
+        .includes(q)
+    );
+  }
+
+  // Group into buckets
+  const groups = new Map();
+  YT_BUCKETS.forEach(b => groups.set(b.key, []));
+  rows.forEach(r => {
+    const bucketKey = youtubeBucketForStatus(r.Status);
+    if (!groups.has(bucketKey)) groups.set(bucketKey, []);
+    groups.get(bucketKey).push(r);
+  });
+
+  wrap.innerHTML = "";
+
+  // Render columns
+  YT_BUCKETS.forEach(b => {
+    const col = document.createElement("div");
+    col.className = "board-col";
+
+    const header = document.createElement("header");
+    header.innerHTML =
+      `<span class="title">${b.key}</span>` +
+      `<span class="count">${groups.get(b.key).length}</span>`;
+    col.appendChild(header);
+
+    const list = document.createElement("div");
+
+    groups.get(b.key).forEach(r => {
+      const ridx  = all.indexOf(r);
+      const title = r.Title || "(Untitled video)";
+      const notes = r.Notes || "";
+      const status = r.Status || "";
+      const badge  = dueBadgeState(r.Planned);
+      const plannedLabel = r.Planned ? fmtDate(r.Planned) : "No date";
+      const thumb  = r.Thumbnail || "";
+      const link   = r.Link || "";
+
+      const card = document.createElement("div");
+      card.className = "req-card";
+
+      let thumbHtml = "";
+      if (thumb) {
+        thumbHtml = `
+          <div class="mt-2">
+            <img src="${htmlesc(thumb)}" alt="" class="rounded w-full max-h-32 object-cover">
+          </div>`;
+      }
+
+      card.innerHTML = `
+        <div class="req-title">${htmlesc(title)}</div>
+        <div class="req-meta">
+          <span class="req-badge ${badge.cls}">${badge.label}</span>
+          ${r.Planned ? `<span>🗓 ${htmlesc(plannedLabel)}</span>` : ""}
+          ${link ? `<span>🔗 <span class="underline">${htmlesc(link)}</span></span>` : ""}
+        </div>
+        ${status ? `
+        <div class="req-meta">
+          <span class="status-pill ${statusClass(status)}">${htmlesc(status)}</span>
+        </div>` : ""}
+        ${notes ? `
+        <div class="req-meta">
+          <span class="line-clamp-2">${htmlesc(notes)}</span>
+        </div>` : ""}
+        ${thumbHtml}
+      `;
+
+      // Actions: status select + Done button (same pattern as Podcast)
+      const actions = document.createElement("div");
+      actions.className = "req-actions";
+
+      const statusOptions = [
+        "Idea",
+        "Scheduled",
+        "Editing",
+        "Review",
+        "Scheduled Upload",
+        "Uploaded",
+        "Archived"
+      ];
+
+      actions.innerHTML = `
+        <select class="statusSel ${statusClass(status)}" data-i="${ridx}" data-k="Status">
+          ${statusOptions.map(s =>
+            `<option ${String(status || "") === s ? "selected" : ""}>${s}</option>`
+          ).join("")}
+        </select>
+        <button class="btn btn-outline text-xs" data-done="${ridx}">✅ Done</button>
+      `;
+
+      card.appendChild(actions);
+      list.appendChild(card);
+    });
+
+    col.appendChild(list);
+    wrap.appendChild(col);
+  });
+
+  // Wire up status changes on the board
+  wrap.querySelectorAll('select[data-k="Status"]').forEach(sel => {
+    sel.addEventListener("change", () => {
+      if (!ensureSheetReady("YouTube")) return;
+      const i = +sel.dataset.i;
+      if (!plannerCache.YouTube[i]) return;
+
+      plannerCache.YouTube[i].Status = sel.value;
+
+      queueAutoSave("YouTube");
+      renderYouTubeBoard();   // refresh columns
+      renderGrid("YouTube");  // table will hide/show based on status
+      updateStats();
+      renderCalendar();
+      renderMiniCalendar();
+      renderUpcomingShort();
+      renderMattPreview();
+      renderTodayFocus();
+    });
+  });
+
+  // "✅ Done" on board sets status => Uploaded (completed)
+  wrap.querySelectorAll("[data-done]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (!ensureSheetReady("YouTube")) return;
+      const i = +btn.dataset.done;
+      if (!plannerCache.YouTube[i]) return;
+
+      plannerCache.YouTube[i].Status = "Uploaded";
+
+      queueAutoSave("YouTube");
+      renderYouTubeBoard();
+      renderGrid("YouTube");
+      updateStats();
+      renderCalendar();
+      renderMiniCalendar();
+      renderUpcomingShort();
+      renderMattPreview();
+      renderTodayFocus();
+    });
+  });
+}
+
+function renderLinkedInBoard() {
+  const wrap = document.getElementById("linkedinBoardWrap");
+  if (!wrap) return;
+
+  const all = plannerCache.LinkedIn || [];
+  const qEl = document.querySelector('[data-search="LinkedIn"]');
+  const q   = (qEl?.value || "").toLowerCase().trim();
+
+  // Search filter
+  let rows = all;
+  if (q) {
+    rows = rows.filter(r =>
+      Object.values(r)
+        .join(" ")
+        .toLowerCase()
+        .includes(q)
+    );
+  }
+
+  // Group into buckets
+  const groups = new Map();
+  LI_BUCKETS.forEach(b => groups.set(b.key, []));
+  rows.forEach(r => {
+    const bucketKey = linkedinBucketForStatus(r.Status);
+    if (!groups.has(bucketKey)) groups.set(bucketKey, []);
+    groups.get(bucketKey).push(r);
+  });
+
+  wrap.innerHTML = "";
+  LI_BUCKETS.forEach(b => {
+    const items = groups.get(b.key) || [];
+    const col = document.createElement("div");
+    col.className = "board-col";
+
+    const header = document.createElement("header");
+    header.innerHTML = `
+      <span class="title">${b.key}</span>
+      <span class="count">${items.length}</span>
+    `;
+    col.appendChild(header);
+
+    const list = document.createElement("div");
+    list.className = "divide-y divide-[#1E2A33]";
+
+    items.forEach(r => {
+      const ridx = all.indexOf(r);
+
+      const card = document.createElement("div");
+      card.className = "req-card"; // reuse card styling
+
+      const title = document.createElement("div");
+      title.className = "req-title";
+      title.textContent = r.Title || "(Post)";
+      card.appendChild(title);
+
+      const meta = document.createElement("div");
+      meta.className = "req-meta";
+      meta.innerHTML = `
+        ${r.Type   ? `<span>${r.Type}</span>` : ""}
+        ${r.Planned ? `<span>🗓 ${fmtDate(r.Planned)}</span>` : ""}
+        ${r.Link   ? `<a href="${r.Link}" target="_blank" rel="noopener">🔗 Link</a>` : ""}
+      `;
+      card.appendChild(meta);
+
+      const actions = document.createElement("div");
+      actions.className = "req-actions";
+      actions.innerHTML = `
+        <select class="statusSel ${statusClass(r.Status)}" data-i="${ridx}" data-k="Status">
+          ${[
+            "Idea",
+            "Mock-Up",
+            "Designing/Editing",
+            "Review",
+            "Scheduled Post",
+            "Posted",
+            "Archived"
+          ].map(s=>`<option ${String(r.Status||"")===s?"selected":""}>${s}</option>`).join("")}
+        </select>
+        <button class="btn btn-outline text-xs" data-done="${ridx}">✅ Done</button>
+      `;
+      card.appendChild(actions);
+
+      list.appendChild(card);
+    });
+
+    col.appendChild(list);
+    wrap.appendChild(col);
+  });
+
+  // Wire status changes
+  wrap.querySelectorAll('select[data-k="Status"]').forEach(sel => {
+    sel.addEventListener("change", () => {
+      if (!ensureSheetReady("LinkedIn")) return;
+      const i = +sel.dataset.i;
+      if (!plannerCache.LinkedIn[i]) return;
+      plannerCache.LinkedIn[i].Status = sel.value;
+      queueAutoSave("LinkedIn");
+      renderLinkedInBoard();
+      renderGrid("LinkedIn");
+      updateStats(); renderCalendar(); renderMiniCalendar(); renderUpcomingShort(); renderMattPreview(); renderTodayFocus();
+    });
+  });
+
+  // "Done" button → set to Posted (completed) and keep it on the board only
+  wrap.querySelectorAll("[data-done]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (!ensureSheetReady("LinkedIn")) return;
+      const i = +btn.dataset.done;
+      if (!plannerCache.LinkedIn[i]) return;
+      plannerCache.LinkedIn[i].Status = "Posted";
+      queueAutoSave("LinkedIn");
+      renderLinkedInBoard();
+      renderGrid("LinkedIn");
+      updateStats(); renderCalendar(); renderMiniCalendar(); renderUpcomingShort(); renderMattPreview(); renderTodayFocus();
+    });
+  });
+}
+
+/* ====== Ideas Library (card layout) ====== */
+function renderIdeas() {
+  const grid = document.getElementById("ideasGrid");
+  if (!grid) return;
+
+  const all = Array.isArray(plannerCache.Ideas) ? plannerCache.Ideas : [];
+  const searchEl = document.getElementById("ideaSearch");
+  const q = (searchEl?.value || "").toLowerCase().trim();
+
+  const rows = q
+    ? all.filter(r =>
+        Object.values(r)
+          .join(" ")
+          .toLowerCase()
+          .includes(q)
+      )
+    : all;
+
+  if (!rows.length) {
+    grid.innerHTML = `
+      <div class="border border-dashed border-[#1E2A33] rounded-lg p-4 text-sm text-dim">
+        No ideas captured yet. Click <b>Add Idea</b> to drop your first thought 💡
+      </div>`;
+    return;
+  }
+
+  const cardsHtml = rows.map((r) => {
+    const i = all.indexOf(r);
+    const createdIso = toInputDate(r.Created || "");
+    const createdPretty = createdIso ? fmtDate(createdIso) : "";
+    const initials = (r.Author || "")
+      .split(/\s+/)
+      .map(p => p[0])
+      .join("")
+      .slice(0, 2) || "ID";
+
+    return `
+      <article class="card p-3 mb-2 flex gap-3 items-start" data-i="${i}">
+        <div class="w-9 h-9 rounded-full bg-[#101827] flex items-center justify-center text-xs font-semibold flex-shrink-0">
+          ${htmlesc(initials)}
+        </div>
+        <div class="flex-1 space-y-2">
+          <div class="flex items-start justify-between gap-2">
+            <input
+              data-k="Idea"
+              data-i="${i}"
+              class="w-full bg-transparent font-semibold border-none focus:outline-none focus:ring-0 text-sm"
+              placeholder="New idea…"
+              value="${htmlesc(r.Idea || "")}"
+            >
+            ${r.Category
+              ? `<span class="text-[10px] uppercase tracking-wide px-2 py-1 rounded-full border border-[#1E2A33] bg-[#060B10] whitespace-nowrap ml-2">
+                   ${htmlesc(r.Category)}
+                 </span>`
+              : ""
+            }
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+            <div class="space-y-1">
+              <label class="block text-[11px] uppercase tracking-wide text-dim">Category</label>
+              <input
+                data-k="Category"
+                data-i="${i}"
+                class="input input-xs w-full"
+                placeholder="Theme, series, campaign…"
+                value="${htmlesc(r.Category || "")}"
+              >
+            </div>
+            <div class="space-y-1">
+              <label class="block text-[11px] uppercase tracking-wide text-dim">Author & date</label>
+              <div class="flex gap-2">
+                <input
+                  data-k="Author"
+                  data-i="${i}"
+                  class="input input-xs flex-1"
+                  placeholder="Who dropped this?"
+                  value="${htmlesc(r.Author || "")}"
+                >
+                <input
+                  type="date"
+                  data-k="Created"
+                  data-i="${i}"
+                  class="input input-xs w-32"
+                  value="${htmlesc(createdIso)}"
+                >
+              </div>
+              ${createdPretty
+                ? `<div class="text-[11px] text-dim mt-0.5">Created: ${htmlesc(createdPretty)}</div>`
+                : ""
+              }
+            </div>
+          </div>
+
+          <div class="space-y-1">
+            <label class="block text-[11px] uppercase tracking-wide text-dim">Notes / hooks</label>
+            <textarea
+              data-k="Notes"
+              data-i="${i}"
+              rows="2"
+              class="input w-full resize-y text-sm"
+              placeholder="Outline, hook, angle, format ideas…"
+            >${htmlesc(r.Notes || "")}</textarea>
+          </div>
+
+          <div class="flex items-center justify-between text-[11px] text-dim pt-1 border-t border-[#1E2A33] mt-1">
+            <span>Auto-synced to <b>Ideas</b> sheet</span>
+            <button
+  type="button"
+  class="btn btn-outline btn-xs"
+  data-del="${i}"
+>
+  Archive idea
+</button>
+          </div>
+        </div>
+      </article>
+    `;
+  }).join("");
+
+  grid.innerHTML = `<div class="space-y-2">${cardsHtml}</div>`;
+
+    // Wiring: live edits
+  grid.querySelectorAll("input, textarea, select").forEach(el => {
+    el.addEventListener("input", () => {
+      if (!ensureSheetReady("Ideas")) return;
+
+      const i = +el.dataset.i;
+      const k = el.dataset.k;
+      if (isNaN(i) || !k || !plannerCache.Ideas[i]) return;
+
+      let v = el.value;
+      if (k === "Created") {
+        v = toSheetDate(v);
+      }
+
+      plannerCache.Ideas[i][k] = v;
+
+      if (plannerCache.Ideas[i].LastEditedBy !== undefined) {
+        plannerCache.Ideas[i].LastEditedBy = CFG.currentUser;
+      }
+
+      // 🔥 keep dashboard "Latest Ideas" in sync while typing
+      renderIdeasPreview();
+
+      queueAutoSave("Ideas");
+      updateStats();
+      renderCalendar();
+      renderMiniCalendar();
+      renderUpcomingShort();
+      renderMattPreview();
+      renderTodayFocus();
+    });
+  });
+
+ // Wiring: archive button
+grid.querySelectorAll("[data-del]").forEach(btn => {
+  btn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!ensureSheetReady("Ideas")) return;
+    const i = +btn.dataset.del;
+    if (isNaN(i) || !plannerCache.Ideas[i]) return;
+
+    plannerCache.Ideas.splice(i, 1);
+    renderIdeas();
+renderIdeasPreview();
+    queueAutoSave("Ideas");
+    updateStats();
+    renderCalendar();
+    renderMiniCalendar();
+    renderUpcomingShort();
+    renderMattPreview();
+    renderTodayFocus();
+  });
+});
+}
+
+// DRONE HELPERS + CARD PLANNER (UK-focused)
+
+/**
+ * Compute risk flags for a drone row
+ * - needsFrzCheck: FRZ required but permission not (yet) Yes
+ * - isHighAlt:     >120 m
+ * - isHighRisk:    Risk level = High OR altitude >120 m
+ *
+ * FRZ itself does NOT directly set isHighRisk; instead we
+ * auto-set RiskLevel = "High" in the event handler when
+ * FRZRequired is changed to "Yes".
+ */
+function calculateDroneRiskFlags(row) {
+  const maxAlt = parseFloat(row.MaxAltitudem || row.MaxAltitude || "");
+  const frzReq  = String(row.FRZRequired || "").toLowerCase();
+  const frzPerm = String(row.FRZPermission || "").toLowerCase();
+  const risk    = String(row.RiskLevel || "").toLowerCase();
+
+  const needsFrzCheck = (frzReq === "yes" && frzPerm !== "yes");
+  const isHighAlt     = !isNaN(maxAlt) && maxAlt > 120; // >120m
+  const isHighRisk    = (risk === "high" || isHighAlt);
+
+  return { needsFrzCheck, isHighAlt, isHighRisk };
+}
+
+// Risk is "hard-locked" while FRZ needs a check OR altitude is >120 m
+function isDroneRiskLocked(row) {
+  const maxAlt = parseFloat(row.MaxAltitudem || row.MaxAltitude || "");
+  const frzReq  = String(row.FRZRequired || "").toLowerCase();
+  const frzPerm = String(row.FRZPermission || "").toLowerCase();
+
+  const frzLock = (frzReq === "yes" && frzPerm !== "yes");
+  const altLock = (!isNaN(maxAlt) && maxAlt > 120);
+
+  return frzLock || altLock;
+}
+
+// Returns true if risk should be locked at High for this row
+// (FRZ required without permission OR altitude > 120 m)
+function isDroneRiskLocked(row){
+  if (!row) return false;
+  const frzReq  = String(row.FRZRequired || "").toLowerCase();
+  const frzPerm = String(row.FRZPermission || "").toLowerCase();
+  const maxAlt  = parseFloat(row.MaxAltitudem || row.MaxAltitude || "");
+
+  const frzLock = (frzReq === "yes" && frzPerm !== "yes");
+  const altLock = (!isNaN(maxAlt) && maxAlt > 120);
+
+  return frzLock || altLock;
+}
+
+/**
+ * Render the Drone tab as a card-based planner.
+ * - Keeps ALL fields (FRZ, altitude, MTOM, category, etc.)
+ * - Uses a Risk level dropdown (Low / Medium / High)
+ * - Shows separate badges for Risk + FRZ check
+ */
+function renderDronePlanner() {
+  const container = document.querySelector('[data-grid="Drone"]');
+  const searchEl  = document.querySelector('[data-search="Drone"]');
+  if (!container) return;
+
+  const allRows = plannerCache.Drone || [];
+  const q = (searchEl?.value || "").toLowerCase().trim();
+
+  // Summary counts based on ALL rows
+  let totalFlights         = allRows.length;
+  let frzRequiredCount     = 0;
+  let highRiskFlaggedCount = 0;
+
+  allRows.forEach(row => {
+    const flags = calculateDroneRiskFlags(row);
+    if (flags.needsFrzCheck) frzRequiredCount++;
+    if (flags.isHighRisk)    highRiskFlaggedCount++;
+  });
+
+  // Update header chips
+  const tEl   = document.getElementById("droneTotalCount");
+  const frzEl = document.getElementById("droneFrzRequiredCount");
+  const hrEl  = document.getElementById("droneHighRiskCount");
+  if (tEl)   tEl.textContent   = String(totalFlights);
+  if (frzEl) frzEl.textContent = String(frzRequiredCount);
+  if (hrEl)  hrEl.textContent  = String(highRiskFlaggedCount);
+
+  // Filtered list (search)
+  const filtered = q
+    ? allRows.filter(r =>
+        Object.values(r)
+          .join(" ")
+          .toLowerCase()
+          .includes(q)
+      )
+    : allRows;
+
+  if (!filtered.length) {
+    container.innerHTML = `
+      <div class="border border-dashed border-[#1E2A33] rounded-lg p-4 text-sm text-dim">
+        No drone flights yet. Click <b>Add Flight</b> to create one.
+      </div>`;
+    return;
+  }
+
+  // Split into Active vs Completed/Archived flights
+  const activeRows    = filtered.filter(r => !isDroneBoardOnlyStatus(r.Status));
+  const completedRows = filtered.filter(r =>  isDroneBoardOnlyStatus(r.Status));
+
+  const statusOptions = [
+    "Planned",
+    "In Progress",
+    "Completed",
+    "Cancelled",
+    "On Hold",
+    "Idea",
+  ];
+
+  // Full-size editable card for active flights
+  const buildActiveCard = (row) => {
+    const idx   = allRows.indexOf(row);
+    const flags = calculateDroneRiskFlags(row);
+
+    // Risk badge (green/red)
+    let riskBadgeText  = "OK / Low risk";
+    let riskBadgeClass = "bg-emerald-500/10 border-emerald-500/40 text-emerald-100";
+
+    if (flags.isHighRisk) {
+      riskBadgeText  = "High risk – review";
+      riskBadgeClass = "bg-red-500/15 border-red-500/50 text-red-100";
+    }
+
+    // FRZ badge is separate (amber)
+    const showFrzBadge = flags.needsFrzCheck;
+
+        const plannedIso = toInputDate(row.Planned || "");
+
+    const frzReq  = String(row.FRZRequired || "Unknown");
+    const frzPerm = String(row.FRZPermission || "No");
+
+            const statusVal = String(row.Status || "");
+    const riskVal   = String(row.RiskLevel || "");
+
+    // Lock risk level while FRZ needs a check OR altitude is >120 m
+    const riskLocked =
+      (frzReq.toLowerCase() === "yes" && frzPerm.toLowerCase() !== "yes") ||
+      flags.isHighAlt;
+
+    let riskLockMsg = "";
+    if (riskLocked) {
+      if (flags.needsFrzCheck && flags.isHighAlt) {
+        riskLockMsg = "Locked: FRZ check required and altitude > 120 m.";
+      } else if (flags.needsFrzCheck) {
+        riskLockMsg = "Locked while FRZ is required and permission is not granted.";
+      } else if (flags.isHighAlt) {
+        riskLockMsg = "Locked while planned altitude is above 120 m.";
+      }
+    }
+
+    return `
+      <div class="border border-[#1E2A33] rounded-lg p-3 bg-[#0F151A] flex flex-col gap-2 row-drone-card" data-drone-card data-index="${idx}">
+        <!-- Top line: title + badges + delete -->
+        <div class="flex items-start justify-between gap-2">
+          <div>
+            <input
+              class="w-full mb-1"
+              placeholder="Flight title…"
+              data-k="Title"
+              value="${htmlesc(row.Title || "")}"
+            >
+            <div class="text-[11px] text-dim">
+              ${htmlesc(row.Site || "No site / location")}
+            </div>
+          </div>
+          <div class="flex flex-col items-end gap-1">
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full border ${riskBadgeClass}" data-risk-badge>
+              <span class="text-[11px] font-medium">${riskBadgeText}</span>
+            </span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full border bg-amber-500/15 border-amber-500/50 text-amber-100 text-[11px] font-medium ${showFrzBadge ? "" : "hidden"}" data-frz-badge>
+              FRZ check required
+            </span>
+          </div>
+        </div>
+
+        <!-- Planned date + Pilot -->
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="text-[11px] text-dim block mb-1">Planned date</label>
+            <input
+              type="date"
+              class="w-full"
+              data-k="Planned"
+              value="${plannedIso}"
+            >
+          </div>
+          <div>
+            <label class="text-[11px] text-dim block mb-1">Pilot</label>
+            <input
+              class="w-full"
+              placeholder="Pilot / PIC"
+              data-k="Pilot"
+              value="${htmlesc(row.Pilot || "")}"
+            >
+          </div>
+        </div>
+
+        <!-- Flight type + Ops type -->
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="text-[11px] text-dim block mb-1">Flight type</label>
+            <input
+              class="w-full"
+              placeholder="e.g. Test / Survey / Promo…"
+              data-k="FlightType"
+              value="${htmlesc(row.FlightType || "")}"
+            >
+          </div>
+          <div>
+            <label class="text-[11px] text-dim block mb-1">Ops type / category</label>
+            <select class="w-full" data-k="OpsType">
+              ${["","VLOS","EVLOS","BVLOS"].map(o => `
+                <option value="${o}" ${String(row.OpsType || "") === o ? "selected" : ""}>${o || "—"}</option>
+              `).join("")}
+            </select>
+          </div>
+        </div>
+
+        <!-- Category / Subcategory / model / MTOM -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs mt-1">
+          <div>
+            <div class="text-[11px] text-dim mb-0.5">Category</div>
+            <select data-k="Category" data-i="${idx}"
+              class="w-full px-2 py-1 rounded bg-[#05080B] border border-[#1E2A33] text-[11px]">
+              ${["Open","Specific"].map(s =>
+                `<option ${String(row.Category || "Open") === s ? "selected" : ""}>${s}</option>`
+              ).join("")}
+            </select>
+          </div>
+          <div>
+            <div class="text-[11px] text-dim mb-0.5">Subcategory</div>
+            <select data-k="Subcategory" data-i="${idx}"
+              class="w-full px-2 py-1 rounded bg-[#05080B] border border-[#1E2A33] text-[11px]">
+              ${["A1","A2","A3","GVC","STS","PDRA"].map(s =>
+                `<option ${String(row.Subcategory || "") === s ? "selected" : ""}>${s}</option>`
+              ).join("")}
+            </select>
+          </div>
+          <div>
+            <div class="text-[11px] text-dim mb-0.5">Drone / model</div>
+            <input
+              class="w-full px-2 py-1 rounded bg-[#05080B] border border-[#1E2A33]"
+              placeholder="e.g. Mavic 3 Classic"
+              data-k="DroneModel"
+              value="${htmlesc(row.DroneModel || "")}">
+          </div>
+          <div>
+            <div class="text-[11px] text-dim mb-0.5">MTOM (kg)</div>
+            <input type="number" step="0.1" data-k="MTOMkg" data-i="${idx}"
+              class="w-full px-2 py-1 rounded bg-[#05080B] border border-[#1E2A33]"
+              placeholder="e.g. 0.9"
+              value="${htmlesc(row.MTOMkg || "")}">
+          </div>
+        </div>
+
+        <!-- FRZ / altitude / permissions -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs mt-1">
+          <div>
+            <div class="text-[11px] text-dim mb-0.5">FRZ required?</div>
+            <select data-k="FRZRequired" data-i="${idx}"
+              class="w-full px-2 py-1 rounded bg-[#05080B] border border-[#1E2A33] text-[11px]">
+              ${["Unknown","Yes","No"].map(s =>
+                `<option ${frzReq === s ? "selected" : ""}>${s}</option>`
+              ).join("")}
+            </select>
+          </div>
+          <div>
+            <div class="text-[11px] text-dim mb-0.5">FRZ permission</div>
+            <select data-k="FRZPermission" data-i="${idx}"
+              class="w-full px-2 py-1 rounded bg-[#05080B] border border-[#1E2A33] text-[11px]">
+              ${["No","Yes","N/A"].map(s =>
+                `<option ${frzPerm === s.toLowerCase() || frzPerm === s ? "selected" : ""}>${s}</option>`
+              ).join("")}
+            </select>
+          </div>
+          <div>
+            <div class="text-[11px] text-dim mb-0.5">Landowner permission</div>
+            <select data-k="LandownerPermission" data-i="${idx}"
+              class="w-full px-2 py-1 rounded bg-[#05080B] border border-[#1E2A33] text-[11px]">
+              ${["No","Yes","N/A"].map(s =>
+                `<option ${String(row.LandownerPermission || "No") === s ? "selected" : ""}>${s}</option>`
+              ).join("")}
+            </select>
+          </div>
+          <div>
+            <div class="text-[11px] text-dim mb-0.5">Max altitude (m)</div>
+            <input type="number" step="1" data-k="MaxAltitudem" data-i="${idx}"
+              class="w-full px-2 py-1 rounded bg-[#05080B] border border-[#1E2A33]"
+              placeholder="e.g. 120"
+              value="${htmlesc(row.MaxAltitudem || "120")}">
+          </div>
+        </div>
+
+        <!-- Status + Risk level -->
+        <div class="grid grid-cols-2 gap-2 mt-2">
+          <div>
+            <label class="text-[11px] text-dim block mb-1">Status</label>
+            <select class="w-full" data-k="Status">
+              ${statusOptions.map(o => `
+                <option value="${o}" ${statusVal === o ? "selected" : ""}>
+                  ${o}
+                </option>
+              `).join("")}
+            </select>
+          </div>
+          <div>
+            <label class="text-[11px] text-dim block mb-1">Risk level</label>
+            <select class="w-full" data-k="RiskLevel" ${riskLocked ? "disabled" : ""}>
+              ${["Low","Medium","High"].map(o => `
+                <option value="${o}" ${riskVal === o ? "selected" : ""}>
+                  ${o}
+                </option>
+              `).join("")}
+            </select>
+            ${riskLocked && riskLockMsg ? `
+              <div class="text-[10px] text-amber-300 mt-1">
+                ${riskLockMsg}
+              </div>
+            ` : ""}
+          </div>
+        </div>
+
+        <!-- Notes + docs -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">
+          <div>
+            <label class="text-[11px] text-dim block mb-1">Operational notes</label>
+            <textarea
+              class="w-full"
+              rows="2"
+              data-k="Notes"
+              placeholder="Additional operational notes…"
+            >${htmlesc(row.Notes || "")}</textarea>
+          </div>
+          <div>
+            <label class="text-[11px] text-dim block mb-1">Docs / links</label>
+            <textarea
+              class="w-full"
+              rows="2"
+              data-k="DocsLink"
+              placeholder="Risk assessment / NOTAM / job pack links…"
+            >${htmlesc(row.DocsLink || "")}</textarea>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between pt-1">
+          <div class="text-[11px] text-dim">
+            Last edited by ${htmlesc(row.LastEditedBy || CFG.currentUser || "Unknown")}
+          </div>
+          <button
+            class="text-[11px] text-red-300 hover:text-red-200 underline"
+            data-del="${idx}"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    `;
+  };
+
+  // Compact summary card for completed / archived flights
+  const buildCompactCard = (row) => {
+    const idx       = allRows.indexOf(row);
+    const statusVal = String(row.Status || "");
+    const planned   = row.Planned ? fmtDate(row.Planned) : "No date";
+
+    return `
+      <div class="card px-3 py-2 space-y-1 text-[11px]" data-drone-card data-index="${idx}">
+        <div class="flex items-center justify-between gap-2">
+          <div class="font-medium text-xs truncate" title="${htmlesc(row.Title || "")}">
+            ${htmlesc(row.Title || "(Flight)")}
+          </div>
+          <span class="px-2 py-0.5 rounded-full border border-[#1E2A33] text-[10px] text-dim">
+            ${htmlesc(statusVal || "Completed")}
+          </span>
+        </div>
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-dim">
+          <span>📍 ${htmlesc(row.Site || "No site")}</span>
+          <span>🗓 ${planned}</span>
+          ${row.Pilot ? `<span>👤 ${htmlesc(row.Pilot)}</span>` : ""}
+        </div>
+        <div class="flex items-center justify-between gap-2 pt-1">
+          <select class="statusSel" data-k="Status">
+            ${statusOptions.map(o => `
+              <option value="${o}" ${statusVal === o ? "selected" : ""}>
+                ${o}
+              </option>
+            `).join("")}
+          </select>
+          <button
+            class="btn btn-outline text-[10px] px-2 py-1"
+            data-make-active="${idx}"
+          >
+            Make active
+          </button>
+        </div>
+      </div>
+    `;
+  };
+
+  const activeCardsHtml    = activeRows.map(buildActiveCard).join("");
+  const completedCardsHtml = completedRows.map(buildCompactCard).join("");
+
+  container.innerHTML = `
+    <div class="space-y-6">
+
+      <!-- Active flights -->
+      <div>
+        ${activeRows.length ? `
+          <div class="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+            ${activeCardsHtml}
+          </div>
+        ` : `
+          <div class="border border-dashed border-[#1E2A33] rounded-lg p-4 text-sm text-dim">
+            No active flights. Mark a flight as <b>Planned</b> or <b>In Progress</b> to see it here.
+          </div>
+        `}
+      </div>
+
+      <!-- Completed / archived flights "board" -->
+      ${completedRows.length ? `
+        <div class="pt-2 border-t border-[#1E2A33]">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-[11px] font-semibold text-dim uppercase tracking-wide">
+              Completed / archived flights
+            </h3>
+            <span class="text-[11px] text-dim">
+              Change <b>Status</b> or click <b>Make active</b> to move a flight back up
+            </span>
+          </div>
+          <div class="grid md:grid-cols-2 xl:grid-cols-3 gap-2 opacity-80">
+            ${completedCardsHtml}
+          </div>
+        </div>
+      ` : ""}
+
+    </div>
+  `;
+
+  // "Make active" buttons – bring card back into active area
+  container.querySelectorAll("[data-make-active]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const idx = +btn.getAttribute("data-make-active");
+      if (Number.isNaN(idx) || !plannerCache.Drone[idx]) return;
+      plannerCache.Drone[idx].Status = "Planned";
+      queueAutoSave("Drone");
+      renderDronePlanner();
+      updateStats(); renderCalendar(); renderMiniCalendar(); renderUpcomingShort(); renderMattPreview(); renderTodayFocus();
+    });
+  });
+}
+
+/**
+ * Event wiring for Drone cards:
+ * - Input / change → update plannerCache.Drone + autosave + re-render
+ * - Delete button → remove row + autosave + re-render
+ */
+(function setupDronePlannerEvents(){
+  const grid   = document.querySelector('[data-grid="Drone"]');
+  const search = document.querySelector('[data-search="Drone"]');
+  if (!grid) return;
+
+  function updateDroneHeaderChips(){
+    const rows = plannerCache.Drone || [];
+    const total = rows.length;
+
+    let frzRequired = 0;
+    let highRisk = 0;
+    rows.forEach(r=>{
+      const flags = calculateDroneRiskFlags(r);
+      if (flags.needsFrzCheck) frzRequired++;
+      if (flags.isHighRisk)    highRisk++;
+    });
+
+    const tEl   = document.getElementById("droneTotalCount");
+    const frzEl = document.getElementById("droneFrzRequiredCount");
+    const hrEl  = document.getElementById("droneHighRiskCount");
+    if (tEl)   tEl.textContent   = total;
+    if (frzEl) frzEl.textContent = frzRequired;
+    if (hrEl)  hrEl.textContent  = highRisk;
+  }
+
+  // Update card classes + badges without full re-render
+  function updateCardRiskTint(card, row){
+    if (!card || !row) return;
+    const { needsFrzCheck, isHighRisk } = calculateDroneRiskFlags(row);
+
+    card.classList.remove("row-drone-highrisk","row-drone-warning");
+    if (isHighRisk) {
+      card.classList.add("row-drone-highrisk");
+    } else if (needsFrzCheck) {
+      card.classList.add("row-drone-warning");
+    }
+
+    const riskBadge = card.querySelector("[data-risk-badge]");
+    if (riskBadge) {
+      if (isHighRisk) {
+        riskBadge.textContent = "High risk – review";
+      } else {
+        riskBadge.textContent = "OK / Low risk";
+      }
+    }
+
+    const frzBadge = card.querySelector("[data-frz-badge]");
+    if (frzBadge) {
+      frzBadge.classList.toggle("hidden", !needsFrzCheck);
+    }
+  }
+
+  // Typing in inputs/textarea: update cache; full re-render only when altitude changes
+  function handleInput(e){
+    const target = e.target;
+    if (!target.matches("input,textarea")) return;
+    const card = target.closest("[data-drone-card]");
+    if (!card) return;
+
+    const idx = Number(card.dataset.index);
+    const key = target.dataset.k;
+    const row = plannerCache.Drone[idx];
+    if (!row || !key) return;
+
+    let value = target.value;
+    if (key === "Planned") {
+      value = toSheetDate(value);
+    }
+    row[key] = value;
+
+    if (row.LastEditedBy !== undefined) {
+      row.LastEditedBy = CFG.currentUser;
+    }
+
+    // Altitude rule: >120 m => force High risk & lock dropdown
+    if (key === "MaxAltitudem" || key === "MaxAltitude") {
+      const alt = parseFloat(value);
+      if (!isNaN(alt) && alt > 120) {
+        showNotice("Warning: planned altitude > 120 m AGL — check UK CAA limits / specific authorisation.");
+        row.RiskLevel = "High";
+      }
+
+      // Altitude may lock/unlock risk, so re-render the card layout
+      queueAutoSave("Drone");
+      updateStats();
+      renderCalendar();
+      renderMiniCalendar();
+      renderUpcomingShort();
+      renderMattPreview();
+      renderTodayFocus();
+      renderDronePlanner();
+      return;
+    }
+
+    // Light-touch updates for other fields
+    updateDroneHeaderChips();
+    updateCardRiskTint(card, row);
+
+    queueAutoSave("Drone");
+    updateStats();
+    renderCalendar();
+    renderMiniCalendar();
+    renderUpcomingShort();
+    renderMattPreview();
+    renderTodayFocus();
+  }
+
+  // Selects / date pickers: may lock risk & auto-set High
+  function handleChange(e){
+    const target = e.target;
+    if (!target.matches("select,input[type='date']")) return;
+    const card = target.closest("[data-drone-card]");
+    if (!card) return;
+
+    const idx = Number(card.dataset.index);
+    const key = target.dataset.k;
+    const row = plannerCache.Drone[idx];
+    if (!row || !key) return;
+
+    let value = target.value;
+
+    // Normalise date to sheet format
+    if (key === "Planned") {
+      value = toSheetDate(value);
+    }
+
+    // User is changing RiskLevel manually
+    if (key === "RiskLevel") {
+      if (isDroneRiskLocked(row)) {
+        // Reset UI to stored value & bail
+        target.value = row.RiskLevel || "High";
+        showNotice("Risk level is locked while FRZ is required without permission or altitude > 120 m.");
+        return;
+      }
+      row.RiskLevel = value;
+    } else {
+      row[key] = value;
+    }
+
+    // FRZ or altitude change: may force High & lock
+    if (["FRZRequired","FRZPermission","MaxAltitudem","MaxAltitude"].includes(key)) {
+      if (isDroneRiskLocked(row)) {
+        row.RiskLevel = "High";
+      }
+    }
+
+    if (row.LastEditedBy !== undefined) {
+      row.LastEditedBy = CFG.currentUser;
+    }
+
+    queueAutoSave("Drone");
+    updateStats();
+    renderCalendar();
+    renderMiniCalendar();
+    renderUpcomingShort();
+    renderMattPreview();
+    renderTodayFocus();
+
+    // Full re-render so the disabled state / badges are in sync
+    renderDronePlanner();
+  }
+
+  function handleDelete(e){
+    const btn = e.target.closest("[data-del]");
+    if (!btn) return;
+    const idx = Number(btn.dataset.del);
+    if (!plannerCache.Drone[idx]) return;
+
+    plannerCache.Drone.splice(idx, 1);
+
+    queueAutoSave("Drone");
+    updateStats();
+    renderCalendar();
+    renderMiniCalendar();
+    renderUpcomingShort();
+    renderMattPreview();
+    renderTodayFocus();
+
+    renderDronePlanner();
+  }
+
+  // Wire up once
+  grid.addEventListener("input",  handleInput);   // smooth typing
+  grid.addEventListener("change", handleChange);  // re-render on meaningful changes
+  grid.addEventListener("click",  handleDelete);  // delete buttons
+
+  if (search) {
+    search.addEventListener("input", () => renderDronePlanner());
+  }
+})();
+
+/* ====== Calendar helpers ====== */
+let calCursor = new Date();
+function collectCalendarEvents(){
+  const push = (arr, dateStr, label, kind, href=null)=>{
+    if(!dateStr) return;
+    const d = parseDateFlexible(dateStr);
+    if (isNaN(d)) return;
+    arr.push({ date: d, label, kind, href });
+  };
+  const events = [];
+  (plannerCache.Podcast||[]).forEach(r=> push(events, r.Planned, r.Title || "(Untitled Podcast)", "podcast"));
+  (plannerCache.YouTube||[]).forEach(r=> push(events, r.Planned, r.Title || "(Untitled Video)", "youtube", r.Link||null));
+  (plannerCache.LinkedIn||[]).forEach(r=> push(events, r.Planned, r.Title || "(LinkedIn Post)", "linkedin", r.Link||null));
+  (plannerCache.Training||[]).forEach(r=> push(events, r.Planned || r.DueDate || "", (r.Module?`${r.Module}: `:"")+(r.VideoTitle||"(Training)")+(r.Progress?` [${r.Progress}]`:""), "training"));
+  (plannerCache.MattsRequests||[]).forEach(r=> push(events, r.DueDate, (r.Request||"(Request)")+(r.Owner?` [${r.Owner}]`:""), "request"));
+  (plannerCache.Drone||[]).forEach(r=> push(events, r.Planned, r.Title || "(Drone Flight)", "drone", r.DocsLink || null));
+  return events;
+}
+function sameDay(a,b){ return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate(); }
+
+/* ====== Main calendar ====== */
+function renderCalendar(){
+  const grid = document.getElementById("calendarGrid");
+  const title = document.getElementById("calTitle");
+  if (!grid || !title) return;
+  const year = calCursor.getFullYear(), month = calCursor.getMonth();
+  const first = new Date(year, month, 1);
+  const startDay = first.getDay();
+  const daysInMonth = new Date(year, month+1, 0).getDate();
+  const today = new Date();
+
+  title.textContent = calCursor.toLocaleDateString(undefined, { month:"long", year:"numeric" });
+
+  const evts = collectCalendarEvents();
+  grid.innerHTML = "";
+
+  const wk = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  wk.forEach(w => {
+    const h = document.createElement("div");
+    h.textContent = w;
+    h.className = "text-center text-dim text-xs";
+    grid.appendChild(h);
+  });
+
+  for(let i=0;i<startDay;i++){
+    const d = document.createElement("div");
+    d.className = "calCell opacity-40";
+    grid.appendChild(d);
+  }
+
+  for(let day=1; day<=daysInMonth; day++){
+    const d = new Date(year, month, day);
+    const cell = document.createElement("div");
+    cell.className = "calCell";
+    if (sameDay(d, today)) cell.classList.add("calToday");
+
+    const head = document.createElement("div");
+    head.className = "day";
+    head.textContent = day;
+    cell.appendChild(head);
+
+    evts.filter(e => sameDay(e.date, d))
+        .slice(0,6)
+        .forEach(e => {
+          const item = document.createElement("div");
+          item.className = "calItem "+e.kind;
+          item.title = e.label;
+          if (e.href) {
+            const a = document.createElement("a");
+            a.href = e.href; a.target = "_blank"; a.className = "underline";
+            a.textContent = e.label;
+            item.appendChild(a);
+          } else {
+            item.textContent = e.label;
+          }
+          cell.appendChild(item);
+        });
+
+    grid.appendChild(cell);
+  }
+}
+document.addEventListener("click", e=>{
+  if (e.target && e.target.id === "calPrev") { calCursor.setMonth(calCursor.getMonth()-1); renderCalendar(); }
+  if (e.target && e.target.id === "calNext") { calCursor.setMonth(calCursor.getMonth()+1); renderCalendar(); }
+  if (e.target && e.target.id === "calToday"){ calCursor = new Date(); renderCalendar(); }
+});
+
+/* ====== Mini calendar ====== */
+let miniCursor = new Date();
+function renderMiniCalendar(){
+  const box = document.getElementById("miniCalendar");
+  const title = document.getElementById("miniTitle");
+  const sk = document.getElementById("miniCalSkeleton");
+  if(!box || !title) return;
+  const y = miniCursor.getFullYear(), m = miniCursor.getMonth();
+  title.textContent = miniCursor.toLocaleDateString(undefined,{month:"long",year:"numeric"});
+  box.innerHTML = "";
+
+  const wk = ["S","M","T","W","T","F","S"];
+  wk.forEach(w => {
+    const h = document.createElement("div");
+    h.textContent = w;
+    h.className = "text-center text-dim text-xs";
+    box.appendChild(h);
+  });
+
+  const first = new Date(y,m,1);
+  const startDay = first.getDay();
+  const days = new Date(y, m+1, 0).getDate();
+  const evts = collectCalendarEvents();
+  const today = new Date();
+
+  for(let i=0;i<startDay;i++){
+    const d=document.createElement("div"); d.className="calCell opacity-40"; box.appendChild(d);
+  }
+  for(let day=1; day<=days; day++){
+    const d = new Date(y,m,day);
+    const cell = document.createElement("div");
+    cell.className = "calCell";
+    if (sameDay(d,today)) cell.classList.add("calToday");
+
+    const head = document.createElement("div");
+    head.className = "day"; head.textContent = day;
+    cell.appendChild(head);
+
+    evts.filter(e => sameDay(e.date, d))
+        .slice(0,3)
+        .forEach(e => {
+          const item = document.createElement("div");
+          item.className = "calItem "+e.kind;
+          item.title = e.label;
+          item.textContent = e.label;
+          cell.appendChild(item);
+        });
+
+    box.appendChild(cell);
+  }
+
+  // hide skeleton once we render the real mini calendar
+  if (sk) sk.classList.add("hidden");
+  box.classList.remove("hidden");
+}
+document.getElementById("miniPrev").addEventListener("click", ()=>{ miniCursor.setMonth(miniCursor.getMonth()-1); renderMiniCalendar(); });
+document.getElementById("miniNext").addEventListener("click", ()=>{ miniCursor.setMonth(miniCursor.getMonth()+1); renderMiniCalendar(); });
+
+/* ====== Icons helper for kinds ====== */
+function iconForKind(kind){
+  if(kind==="podcast") return "🎙";
+  if(kind==="youtube") return "▶️";
+  if(kind==="linkedin") return "💼";
+  if(kind==="training") return "📚";
+  if(kind==="request") return "📝";
+  if(kind==="drone")   return "🚁";
+  return "•";
+}
+
+/* ====== Dashboard extras ====== */
+function renderUpcomingShort(){
+  const box = document.getElementById("upcomingShort");
+  if(!box) return;
+  const events = collectCalendarEvents();
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  const horizon = new Date(today);
+  horizon.setDate(horizon.getDate()+7);
+
+  const filtered = events
+    .filter(e => e.date >= today && e.date <= horizon)
+    .sort((a,b)=>a.date - b.date)
+    .slice(0,40);
+
+  if(!filtered.length){
+    box.innerHTML = `<div class="text-sm text-dim">No items in the next 7 days.</div>`;
+    return;
+  }
+
+  const byDay = {};
+  filtered.forEach(e=>{
+    const key = e.date.toISOString().slice(0,10);
+    (byDay[key] ||= []).push(e);
+  });
+
+  box.innerHTML = Object.entries(byDay).slice(0,7).map(([iso, items])=>{
+    const nice = fmtDate(iso);
+    const rows = items.map(e=>`
+      <div class="flex items-center gap-2 text-xs mt-1">
+        <span>${iconForKind(e.kind)}</span>
+        <span class="truncate" title="${htmlesc(e.label)}">${htmlesc(e.label)}</span>
+      </div>`).join("");
+    return `<div class="border border-[#1E2A33] rounded-md p-2 mb-2">
+      <div class="text-[11px] text-dim mb-1">${nice}</div>
+      ${rows}
+    </div>`;
+  }).join("");
+}
+
+function renderMattPreview(){
+  const box = document.getElementById("mattPreview");
+  if(!box) return;
+  const rows = (plannerCache.MattsRequests || []).filter(r => !/completed|done|archived/i.test(r.Status||""));
+  if(!rows.length){
+    box.innerHTML = `<div class="text-sm text-dim">No open requests 🎉</div>`;
+    return;
+  }
+  const prioRank = p=>{
+    const v=String(p||"").toLowerCase();
+    if(v==="high") return 0;
+    if(v==="medium") return 1;
+    if(v==="low") return 2;
+    return 3;
+  };
+  rows.sort((a,b)=>{
+    const pa=prioRank(a.Priority), pb=prioRank(b.Priority);
+    if(pa!==pb) return pa-pb;
+    const da=parseDateFlexible(a.DueDate), db=parseDateFlexible(b.DueDate);
+    const aNa=isNaN(da), bNa=isNaN(db);
+    if(aNa!==bNa) return aNa-bNa;
+    if(!aNa && !bNa && da-db) return da-db;
+    return 0;
+  });
+  const top = rows.slice(0,4);
+  box.innerHTML = top.map(r=>{
+    const badge = (()=>{
+      const p = String(r.Priority||"").toLowerCase();
+      if(p==="high") return `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/20 border border-red-400/40 text-red-100">High</span>`;
+      if(p==="medium") return `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-400/40 text-amber-100">Medium</span>`;
+      if(p==="low") return `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-500/15 border border-slate-400/40 text-slate-100">Low</span>`;
+      return "";
+    })();
+    const due = r.DueDate ? fmtDate(r.DueDate) : "No date";
+    const owner = r.Owner || "";
+    return `<div class="border border-[#1E2A33] rounded-md p-2 mb-2">
+      <div class="flex items-center justify-between gap-2">
+        <div class="font-semibold text-sm truncate" title="${htmlesc(r.Request||"(Request)")}">${htmlesc(r.Request||"(Request)")}</div>
+        ${badge}
+      </div>
+      <div class="text-[11px] text-dim mt-1 flex items-center justify-between gap-2">
+        <span>${owner ? htmlesc(owner) : ""}</span>
+        <span>${due}</span>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+/* ====== Today Focus strip ====== */
+function renderTodayFocus(){
+  const box = document.getElementById("todayFocus");
+  if (!box) return;
+
+  const events = collectCalendarEvents();
+  const today = new Date();
+  today.setHours(0,0,0,0);
+
+  const todaysEvents = events
+    .filter(e => sameDay(e.date, today))
+    .sort((a,b)=>a.date - b.date)
+    .slice(0,10);
+
+  const openReqs = (plannerCache.MattsRequests || []).filter(r =>
+    !/completed|done|archived/i.test(r.Status||"")
+  );
+
+  const prioRank = p=>{
+    const v = String(p||"").toLowerCase();
+    if(v==="high") return 0;
+    if(v==="medium") return 1;
+    if(v==="low") return 2;
+    return 3;
+  };
+  openReqs.sort((a,b)=>{
+    const pa=prioRank(a.Priority), pb=prioRank(b.Priority);
+    if(pa!==pb) return pa-pb;
+    const da=parseDateFlexible(a.DueDate), db=parseDateFlexible(b.DueDate);
+    const aNa=isNaN(da), bNa=isNaN(db);
+    if(aNa!==bNa) return aNa-bNa;
+    if(!aNa && !bNa && da-db) return da-db;
+    return 0;
+  });
+  const topReqs = openReqs.slice(0,2);
+
+  if (!todaysEvents.length && !topReqs.length) {
+    box.innerHTML = `<div class="text-xs text-dim">Nothing time-sensitive today — perfect for deep work ✨</div>`;
+    return;
+  }
+
+  const todayLabel = today.toLocaleDateString(undefined,{ weekday:"short", day:"2-digit", month:"short" });
+
+  const eventsHtml = todaysEvents.length
+    ? todaysEvents.map(e=>`
+        <div class="flex items-center gap-2 text-xs">
+          <span>${iconForKind(e.kind)}</span>
+          <span class="truncate" title="${htmlesc(e.label)}">${htmlesc(e.label)}</span>
+        </div>`).join("")
+    : `<div class="text-xs text-dim">No scheduled content today.</div>`;
+
+  const reqsHtml = topReqs.length
+    ? topReqs.map(r=>{
+        const due = r.DueDate ? fmtDate(r.DueDate) : "No date";
+        return `<div class="text-xs">
+          <div class="truncate font-semibold" title="${htmlesc(r.Request||"(Request)")}">${htmlesc(r.Request||"(Request)")}</div>
+          <div class="text-[11px] text-dim">${htmlesc(r.Owner||"")} · ${due} · ${htmlesc(r.Priority||"")}</div>
+        </div>`;
+      }).join("")
+    : `<div class="text-xs text-dim">No open Matt’s requests.</div>`;
+
+  box.innerHTML = `
+    <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+      <div class="flex-1">
+        <div class="text-[11px] uppercase tracking-wide text-dim mb-1">Today • ${todayLabel}</div>
+        <div class="space-y-1">${eventsHtml}</div>
+      </div>
+      <div class="flex-1 md:border-l md:border-[#1E2A33] md:pl-3">
+        <div class="text-[11px] uppercase tracking-wide text-dim mb-1">Matt’s focus</div>
+        <div class="space-y-1">${reqsHtml}</div>
+      </div>
+    </div>
+  `;
+}
+
+/* ====== Analytics ====== */
+const CH = { bySheet: null, upcoming: null, training: null, releases: null };
+
+function toPercentNumber(v){
+  if (v == null || v === "") return null;
+  if (typeof v === "number") {
+    if (v <= 1.5) return v*100;
+    return v;
+  }
+  const s = String(v).trim();
+  if (/^\d+(\.\d+)?%$/.test(s)) return parseFloat(s);
+  if (/^\d+(\.\d+)?$/.test(s)) {
+    const n = parseFloat(s);
+    return n <= 1.5 ? n*100 : n;
+  }
+  return null;
+}
+
+function renderAnalytics(){
+  const colorsChannel = {
+    "Podcast":        "#16a34a",
+    "YouTube":        "#f472b6",
+    "LinkedIn":       "#3b82f6",
+    "Training":       "#22c55e",
+    "Matt's Requests":"#facc15",
+    "Ideas":          "#6366f1",
+    "Drone":          "#a855f7"
+  };
+
+  /* ---- 1) Planner items per channel ---- */
+  const labels1 = ["Podcast","YouTube","LinkedIn","Training","Matt's Requests","Ideas","Drone"];
+  const counts1 = [
+    (plannerCache.Podcast||[]).length,
+    (plannerCache.YouTube||[]).length,
+    (plannerCache.LinkedIn||[]).length,
+    (plannerCache.Training||[]).length,
+    (plannerCache.MattsRequests||[]).length,
+    (plannerCache.Ideas||[]).length,
+    (plannerCache.Drone||[]).length
+  ];
+  const ctx1 = document.getElementById("chartBySheet");
+  if (ctx1) {
+    if (CH.bySheet) { try { CH.bySheet.destroy(); } catch {} }
+    CH.bySheet = new Chart(ctx1, {
+      type:'bar',
+      data:{
+        labels: labels1,
+        datasets:[{
+          data: counts1,
+          backgroundColor: labels1.map(l=>colorsChannel[l]),
+          borderColor: labels1.map(l=>colorsChannel[l]),
+          borderWidth:1
+        }]
+      },
+      options:{
+        maintainAspectRatio:false,
+        responsive:true,
+        animation:false,
+        plugins:{ legend:{ display:false } },
+        scales:{
+          x:{ ticks:{ color:'#9BB4A1' }, grid:{ display:false } },
+          y:{ ticks:{ color:'#9BB4A1' }, grid:{ color:'rgba(148,163,184,0.2)' } }
+        }
+      }
+    });
+  }
+
+  /* ---- 2) Upcoming items by channel ---- */
+  function countUpcoming(arr, dateKey){
+    const today = new Date(); today.setHours(0,0,0,0);
+    return (arr||[]).filter(r=>{
+      const d = parseDateFlexible(r[dateKey]);
+      return !isNaN(d) && d >= today;
+    }).length;
+  }
+  const upcomingMap = {
+    "Podcast":  countUpcoming(plannerCache.Podcast, "Planned"),
+    "YouTube":  countUpcoming(plannerCache.YouTube, "Planned"),
+    "LinkedIn": countUpcoming(plannerCache.LinkedIn, "Planned"),
+    "Training": countUpcoming(plannerCache.Training, "Planned"),
+    "Drone":    countUpcoming(plannerCache.Drone, "Planned"),
+  };
+  const labels2 = Object.keys(upcomingMap).filter(k=>upcomingMap[k]>0);
+  const data2   = labels2.map(k=>upcomingMap[k]);
+  const ctx2 = document.getElementById("chartUpcoming");
+  if (ctx2) {
+    if (CH.upcoming) { try { CH.upcoming.destroy(); } catch {} }
+    if (labels2.length) {
+      CH.upcoming = new Chart(ctx2, {
+        type:'doughnut',
+        data:{
+          labels: labels2,
+          datasets:[{
+            data: data2,
+            backgroundColor: labels2.map(l=>colorsChannel[l]),
+            borderColor: '#0B0F12',
+            borderWidth:1
+          }]
+        },
+        options:{
+          maintainAspectRatio:false,
+          responsive:true,
+          animation:false,
+          plugins:{ legend:{ labels:{ color:'#9BB4A1' } } }
+        }
+      });
+    } else {
+      ctx2.getContext("2d").clearRect(0,0,ctx2.width,ctx2.height);
+    }
+  }
+
+  /* ---- 3) Training modules completion ---- */
+  const ctx3 = document.getElementById("chartTraining");
+  if (ctx3) {
+    if (CH.training) { try { CH.training.destroy(); } catch {} }
+    const rows = plannerCache.Training || [];
+    if (rows.length) {
+      const labels3 = rows.map(r =>
+  (r.ModuleName || r.LessonTitle || r.TrainingType || "Module").slice(0, 18)
+);
+      const data3 = rows.map(r=>{
+        const p = toPercentNumber(r.Progress);
+        return p == null ? 0 : Math.max(0, Math.min(100, p));
+      });
+      CH.training = new Chart(ctx3, {
+        type:'bar',
+        data:{
+          labels: labels3,
+          datasets:[{
+            data: data3,
+            backgroundColor: colorsChannel["Training"],
+            borderColor: colorsChannel["Training"],
+            borderWidth:1
+          }]
+        },
+        options:{
+          maintainAspectRatio:false,
+          responsive:true,
+          animation:false,
+          plugins:{ legend:{ display:false } },
+          scales:{
+            x:{ ticks:{ color:'#9BB4A1', maxRotation:40, minRotation:0 }, grid:{ display:false } },
+            y:{ ticks:{ color:'#9BB4A1', callback:v=>v+"%" }, grid:{ color:'rgba(148,163,184,0.2)' }, suggestedMin:0, suggestedMax:100 }
+          }
+        }
+      });
+    } else {
+      ctx3.getContext("2d").clearRect(0,0,ctx3.width,ctx3.height);
+    }
+  }
+
+  /* ---- 4) Releases per month (Podcast vs YouTube) ---- */
+  const ctx4 = document.getElementById("chartReleases");
+  if (ctx4) {
+    if (CH.releases) { try { CH.releases.destroy(); } catch {} }
+    const map = new Map();
+
+    function addMonth(d, key){
+      if (!d || isNaN(d)) return;
+      const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+      if (!map.has(k)) map.set(k,{ Podcast:0, YouTube:0 });
+      map.get(k)[key] += 1;
+    }
+    (rssPodcast||[]).forEach(e=>{
+      const d = new Date(e.pubDate);
+      if (!isNaN(d)) addMonth(d,"Podcast");
+    });
+    (rssYouTube||[]).forEach(v=>{
+      const d = new Date(v.published);
+      if (!isNaN(d)) addMonth(d,"YouTube");
+    });
+
+    let entries = Array.from(map.entries()).sort((a,b)=>a[0].localeCompare(b[0]));
+    if (entries.length > 12) entries = entries.slice(entries.length-12);
+
+    const labels4 = entries.map(([k])=>{
+      const [y,m] = k.split("-");
+      const d = new Date(Number(y), Number(m)-1, 1);
+      return d.toLocaleDateString(undefined,{month:"short",year:"2-digit"});
+    });
+    const podData = entries.map(([,v])=>v.Podcast);
+    const ytData  = entries.map(([,v])=>v.YouTube);
+
+    if (labels4.length) {
+      CH.releases = new Chart(ctx4, {
+        type:'bar',
+        data:{
+          labels: labels4,
+          datasets:[
+            { label:"Podcast", data:podData, backgroundColor:colorsChannel["Podcast"]+"CC", borderColor:colorsChannel["Podcast"], borderWidth:1, stack:"releases" },
+            { label:"YouTube", data:ytData,  backgroundColor:colorsChannel["YouTube"]+"CC", borderColor:colorsChannel["YouTube"], borderWidth:1, stack:"releases" }
+          ]
+        },
+        options:{
+          maintainAspectRatio:false,
+          responsive:true,
+          animation:false,
+          plugins:{ legend:{ labels:{ color:'#9BB4A1' } } },
+          scales:{
+            x:{ stacked:true, ticks:{ color:'#9BB4A1' }, grid:{ display:false } },
+            y:{ stacked:true, ticks:{ color:'#9BB4A1' }, grid:{ color:'rgba(148,163,184,0.2)' } }
+          }
+        }
+      });
+    } else {
+      ctx4.getContext("2d").clearRect(0,0,ctx4.width,ctx4.height);
+    }
+  }
+}
+
+/* ====== Logo helpers ====== */
+function driveDirectUrl(u){
+  try{
+    if (!u) return "";
+    const url = new URL(u);
+    if (url.hostname.includes("drive.google.com")) {
+      let id = url.searchParams.get("id");
+      if (!id && url.pathname.includes("/file/d/")) {
+        const m = url.pathname.match(/\/file\/d\/([^/]+)/);
+        if (m) id = m[1];
+      }
+      if (id) return `https://drive.google.com/uc?export=view&id=${id}`;
+    }
+    return u;
+  }catch{ return u }
+}
+function setLogo(u){
+  const img = document.getElementById("logo");
+  if (!u || !img) return;
+
+  function normalize(u){
+    try{
+      const url = new URL(u);
+      if (url.hostname.includes("drive.google.com")) {
+        let id = url.searchParams.get("id");
+        if (!id && url.pathname.includes("/file/d/")) {
+          const m = url.pathname.match(/\/file\/d\/([^/]+)/);
+          if (m) id = m[1];
+        }
+        if (id) return `https://drive.google.com/uc?export=view&id=${id}`;
+      }
+      return u;
+    }catch{ return u }
+  }
+
+  const base = normalize(u);
+  const candidates = [];
+  try {
+    const url = new URL(base);
+    const id = url.searchParams.get("id");
+    url.searchParams.set("t", Date.now());
+    candidates.push(url.toString());
+    const d = new URL(url.toString());
+    d.searchParams.set("export","download");
+    candidates.push(d.toString());
+    if (id) candidates.push(`https://drive.google.com/thumbnail?id=${id}&sz=w2000`);
+    const prox = `https://images.weserv.nl/?url=${encodeURIComponent(`drive.google.com/uc?export=view&id=${id||""}`)}`;
+    candidates.push(prox);
+  } catch {
+    candidates.push(base);
+  }
+
+  let idx = 0;
+  function tryNext(){
+    if (idx >= candidates.length) { showNotice("Logo failed to load. Verify sharing or use a data URL."); return; }
+    const src = candidates[idx++];
+    img.onerror = tryNext; img.onload = ()=>{};
+    img.src = src;
+  }
+  tryNext();
+}
+
+function loadSettingsUI(){
+  $("#cfgScriptUrl").value = CFG.scriptUrl;
+  $("#cfgPodcastRss").value = CFG.podcastRss;
+  $("#cfgYtChannel").value = CFG.ytChannel;
+  $("#cfgLogo").value = CFG.logoUrl;
+  $("#cfgUser").value = CFG.currentUser;
+  if (CFG.logoUrl) setLogo(CFG.logoUrl);
+}
+$("#cfgSave").addEventListener("click", ()=>{
+  CFG.scriptUrl  = $("#cfgScriptUrl").value.trim() || CFG.scriptUrl;
+  CFG.podcastRss = $("#cfgPodcastRss").value.trim() || CFG.podcastRss;
+  CFG.ytChannel  = $("#cfgYtChannel").value.trim()  || CFG.ytChannel;
+  CFG.logoUrl    = $("#cfgLogo").value.trim()       || CFG.logoUrl;
+  CFG.currentUser= $("#cfgUser").value.trim()       || CFG.currentUser;
+  ["cfg_scriptUrl","cfg_podcastRss","cfg_ytChannel","cfg_logo","cfg_user"].forEach((k,i)=>{
+    ls.set(k,[CFG.scriptUrl,CFG.podcastRss,CFG.ytChannel,CFG.logoUrl,CFG.currentUser][i]);
+  });
+  if (CFG.logoUrl) setLogo(CFG.logoUrl);
+  showNotice("Settings saved. Reloading feeds…");
+  Promise.all([loadPodcast(), loadYouTube()]).then(()=> { updateStats(); bumpLastUpdated(); setTimeout(hideNotice, 1200); });
+});
+$("#cfgReset").addEventListener("click", ()=>{
+  ["cfg_scriptUrl","cfg_podcastRss","cfg_ytChannel","cfg_logo","cfg_user"].forEach(ls.del);
+  showNotice("Local cache cleared. Reload the page.");
+});
+$("#logoTest").addEventListener("click", ()=>{
+  const u = $("#cfgLogo").value.trim();
+  if(!u){ showNotice("Enter a Logo URL first."); return; }
+  const src = driveDirectUrl(u);
+  window.open(src, "_blank");
+  $("#logoOpen").href = src;
+});
+
+/* ====== Tabs ====== */
+function setActiveTab(name){
+  // Only real content tabs here – no calendar/analytics/settings
+  const ids = ["dashboard","planner","drone","requests","training","ideas"];
+
+  ids.forEach(id=>{
+    const el = document.getElementById("tab-"+id);
+    if (el) el.classList.toggle("hidden", id!==name);
+  });
+
+  document.querySelectorAll(".tabTrigger").forEach(btn=>{
+    btn.classList.toggle("active", btn.dataset.tab === name);
+  });
+
+  if (name === "ideas") renderIdeas();
+  if (name === "requests") {
+    const v = JSON.parse(localStorage.getItem("req_view") || '"board"');
+    if (v === "board" && typeof renderRequestsBoard === "function") renderRequestsBoard();
+  }
+}
+
+// Wire tab buttons once (outside the function)
+document.querySelectorAll(".tabTrigger").forEach(btn=>{
+  btn.addEventListener("click", ()=> setActiveTab(btn.dataset.tab));
+});
+setActiveTab("dashboard");
+
+/* ====== Settings modal ====== */
+const settingsOverlay = document.getElementById("modal-settings");
+const openSettingsBtn  = document.getElementById("openSettings");
+const closeSettingsBtn = document.getElementById("closeSettings");
+
+if (openSettingsBtn && settingsOverlay) {
+  openSettingsBtn.addEventListener("click", ()=>{
+    settingsOverlay.classList.add("modal-open");
+  });
+}
+if (closeSettingsBtn && settingsOverlay) {
+  closeSettingsBtn.addEventListener("click", ()=>{
+    settingsOverlay.classList.remove("modal-open");
+  });
+}
+if (settingsOverlay) {
+  // Click backdrop to close
+  settingsOverlay.addEventListener("click", (e)=>{
+    if (e.target.id === "modal-settings") settingsOverlay.classList.remove("modal-open");
+  });
+  // ESC to close (nice QoL)
+  document.addEventListener("keydown", (e)=>{
+    if (e.key === "Escape") settingsOverlay.classList.remove("modal-open");
+  });
+}
+
+/* ====== Calendar modal ====== */
+document.getElementById("openCalendar")?.addEventListener("click", ()=>{
+  const m = document.getElementById("modal-calendar");
+  if (!m) return;
+  m.classList.add("modal-open");
+  renderCalendar();
+});
+document.getElementById("closeCalendar")?.addEventListener("click", ()=>{
+  document.getElementById("modal-calendar")?.classList.remove("modal-open");
+});
+document.getElementById("modal-calendar")?.addEventListener("click", (e)=>{
+  if (e.target.id === "modal-calendar") {
+    document.getElementById("modal-calendar")?.classList.remove("modal-open");
+  }
+});
+
+/* ====== Analytics modal ====== */
+document.getElementById("openAnalytics")?.addEventListener("click", ()=>{
+  const m = document.getElementById("modal-analytics");
+  if (!m) return;
+  m.classList.add("modal-open");
+  renderAnalytics();
+});
+document.getElementById("closeAnalytics")?.addEventListener("click", ()=>{
+  document.getElementById("modal-analytics")?.classList.remove("modal-open");
+});
+document.getElementById("modal-analytics")?.addEventListener("click", (e)=>{
+  if (e.target.id === "modal-analytics") {
+    document.getElementById("modal-analytics")?.classList.remove("modal-open");
+  }
+});
+
+/* ====== Planner buttons ====== */
+document.querySelectorAll("[data-add]").forEach(b=>b.addEventListener("click", ()=>{
+  const sheet=b.getAttribute("data-add");
+  if (!ensureSheetReady(sheet)) return;
+  plannerCache[sheet].push(defaultRowFor(sheet));
+if (sheet === "Drone") {
+  renderDronePlanner();
+} else {
+  renderGrid(sheet);
+}
+  queueAutoSave(sheet);
+  updateStats();
+  renderCalendar();
+  renderMiniCalendar();
+  renderUpcomingShort();
+  renderMattPreview();
+  renderTodayFocus();
+}));
+document.querySelectorAll("[data-save]").forEach(b=>b.addEventListener("click", async ()=>{
+  const sheet=b.getAttribute("data-save");
+  if (!ensureSheetReady(sheet)) return;
+  try{ await writeSheet(sheet, plannerCache[sheet]); showNotice(`${sheet}: saved to Google Sheets`); bumpLastUpdated(); setTimeout(hideNotice,1500);
+       updateStats(); renderCalendar(); renderMiniCalendar(); renderUpcomingShort(); renderMattPreview(); renderTodayFocus();
+  } catch(e){ showNotice(`${sheet}: save failed — ${e.message||e}`) }
+}));
+document.querySelectorAll("[data-reload]").forEach(b=>b.addEventListener("click", async ()=>{
+  const sheet=b.getAttribute("data-reload");
+  await loadSheetLoop(sheet);
+  updateStats(); renderCalendar(); renderMiniCalendar(); renderUpcomingShort(); renderMattPreview(); renderTodayFocus(); bumpLastUpdated();
+}));
+
+document.getElementById("ideaAdd")?.addEventListener("click", () => {
+  if (!ensureSheetReady("Ideas")) return;
+  plannerCache.Ideas.unshift({
+    Idea: "",
+    Category: "",
+    Author: CFG.currentUser,
+    Created: new Date().toISOString().slice(0, 10),
+    Notes: ""
+  });
+  renderIdeas();
+renderIdeasPreview();
+  queueAutoSave("Ideas");
+  updateStats();
+  renderCalendar();
+  renderMiniCalendar();
+  renderUpcomingShort();
+  renderMattPreview();
+  renderTodayFocus();
+});
+
+document.getElementById("ideaSave")?.addEventListener("click", async () => {
+  if (!ensureSheetReady("Ideas")) return;
+  try {
+    await writeSheet("Ideas", plannerCache.Ideas);
+    showNotice("Ideas saved.");
+    bumpLastUpdated();
+    setTimeout(hideNotice, 1200);
+    updateStats();
+    renderCalendar();
+    renderMiniCalendar();
+    renderUpcomingShort();
+    renderMattPreview();
+    renderTodayFocus();
+  } catch (e) {
+    showNotice("Ideas save failed — " + (e.message || e));
+  }
+});
+
+document.getElementById("ideaReload")?.addEventListener("click", async () => {
+  await loadSheetLoop("Ideas");
+  updateStats();
+  renderCalendar();
+  renderMiniCalendar();
+  renderUpcomingShort();
+  renderMattPreview();
+  renderTodayFocus();
+  bumpLastUpdated();
+});
+
+document.getElementById("ideaSearch")?.addEventListener("input", renderIdeas);
+
+const droneSearchInput = document.querySelector('[data-search="Drone"]');
+if (droneSearchInput) {
+  droneSearchInput.addEventListener("input", () => renderDronePlanner());
+}
+
+/* ====== Matt's Requests quick filters wiring ====== */
+(function setupMattFilters(){
+  const allBtn     = document.getElementById("mreqFilterAll");
+  const highBtn    = document.getElementById("mreqFilterHigh");
+  const weekBtn    = document.getElementById("mreqFilterWeek");
+  const overdueBtn = document.getElementById("mreqFilterOverdue");
+  if (!allBtn) return;
+
+  const btns = [allBtn, highBtn, weekBtn, overdueBtn];
+
+  function setFilter(newFilter){
+    mattsFilter = newFilter;
+    btns.forEach(b => { b.classList.remove("btn-primary"); b.classList.add("btn-outline"); });
+
+    if (newFilter === "all")     { allBtn.classList.add("btn-primary"); allBtn.classList.remove("btn-outline"); }
+    if (newFilter === "high")    { highBtn.classList.add("btn-primary"); highBtn.classList.remove("btn-outline"); }
+    if (newFilter === "week")    { weekBtn.classList.add("btn-primary"); weekBtn.classList.remove("btn-outline"); }
+    if (newFilter === "overdue") { overdueBtn.classList.add("btn-primary"); overdueBtn.classList.remove("btn-outline"); }
+
+    renderGrid("MattsRequests");
+  }
+
+  allBtn.addEventListener("click",   ()=>setFilter("all"));
+  highBtn.addEventListener("click",  ()=>setFilter("high"));
+  weekBtn.addEventListener("click",  ()=>setFilter("week"));
+  overdueBtn.addEventListener("click",()=>setFilter("overdue"));
+
+  setFilter(mattsFilter || "all");
+})();
+
+/* ====== Matt's Requests: view toggle ====== */
+(function setupRequestsView(){
+  const btnTable = document.getElementById("reqViewTable");
+  const btnBoard = document.getElementById("reqViewBoard");
+  const elTable  = document.getElementById("requestsTable");
+  const elBoard  = document.getElementById("requestsBoard");
+
+  if (!btnTable || !btnBoard || !elTable || !elBoard) return;
+
+  function setView(v){
+    localStorage.setItem(REQ_VIEW_KEY, JSON.stringify(v));
+    const isBoard = v === "board";
+    elBoard.classList.toggle("hidden", !isBoard);
+    elTable.classList.toggle("hidden", isBoard);
+    btnBoard.classList.toggle("active", isBoard);
+    btnTable.classList.toggle("active", !isBoard);
+    if (isBoard) renderRequestsBoard();
+    else renderGrid("MattsRequests");
+  }
+
+  btnTable.addEventListener("click", ()=> setView("table"));
+  btnBoard.addEventListener("click", ()=> setView("board"));
+
+  const saved = (()=>{
+    try{ return JSON.parse(localStorage.getItem(REQ_VIEW_KEY)) || "board"; }catch{ return "board" }
+  })();
+  setView(saved);
+})();
+
+/* ====== Training: view toggle ====== */
+(function setupTrainingView() {
+  const btnTable = document.getElementById("trainingViewTable");
+  const btnBoard = document.getElementById("trainingViewBoard");
+  const elTable  = document.getElementById("trainingTable");
+  const elBoard  = document.getElementById("trainingBoard");
+
+  if (!btnTable || !btnBoard || !elTable || !elBoard) return;
+
+  function setView(v) {
+    localStorage.setItem(TRAIN_VIEW_KEY, JSON.stringify(v));
+    const isBoard = v === "board";
+    elBoard.classList.toggle("hidden", !isBoard);
+    elTable.classList.toggle("hidden", isBoard);
+    btnBoard.classList.toggle("active", isBoard);
+    btnTable.classList.toggle("active", !isBoard);
+    if (isBoard) renderTrainingBoard();
+    else renderGrid("Training");
+  }
+
+  btnTable.addEventListener("click", () => setView("table"));
+  btnBoard.addEventListener("click", () => setView("board"));
+
+  const saved = (() => {
+    try { return JSON.parse(localStorage.getItem(TRAIN_VIEW_KEY)) || "board"; }
+    catch { return "board"; }
+  })();
+
+  setView(saved);
+})();
+
+/* ====== Podcast: view toggle ====== */
+(function setupPodcastView(){
+  const btnTable = document.getElementById("podViewTable");
+  const btnBoard = document.getElementById("podViewBoard");
+  const elTable  = document.getElementById("podcastTable");
+  const elBoard  = document.getElementById("podcastBoard");
+
+  if (!btnTable || !btnBoard || !elTable || !elBoard) return;
+
+  function setView(v){
+    localStorage.setItem(POD_VIEW_KEY, JSON.stringify(v));
+    const isBoard = v === "board";
+    elBoard.classList.toggle("hidden", !isBoard);
+    elTable.classList.toggle("hidden", isBoard);
+    btnBoard.classList.toggle("active", isBoard);
+    btnTable.classList.toggle("active", !isBoard);
+    if (isBoard) renderPodcastBoard();
+    else renderGrid("Podcast");
+  }
+
+  btnTable.addEventListener("click", ()=> setView("table"));
+  btnBoard.addEventListener("click", ()=> setView("board"));
+
+  const saved = (()=> {
+    try { return JSON.parse(localStorage.getItem(POD_VIEW_KEY)) || "board"; }
+    catch { return "board"; }
+  })();
+  setView(saved);
+})();
+
+/* ====== YouTube: view toggle ====== */
+(function setupYouTubeView(){
+  const btnTable = document.getElementById("ytViewTable");
+  const btnBoard = document.getElementById("ytViewBoard");
+  const elTable  = document.getElementById("youtubeTable");
+  const elBoard  = document.getElementById("youtubeBoard");
+
+  if (!btnTable || !btnBoard || !elTable || !elBoard) return;
+
+  function setView(v){
+    localStorage.setItem(YT_VIEW_KEY, JSON.stringify(v));
+    const isBoard = v === "board";
+    elBoard.classList.toggle("hidden", !isBoard);
+    elTable.classList.toggle("hidden", isBoard);
+    btnBoard.classList.toggle("active", isBoard);
+    btnTable.classList.toggle("active", !isBoard);
+    if (isBoard) renderYouTubeBoard();
+    else renderGrid("YouTube");
+  }
+
+  btnTable.addEventListener("click", ()=> setView("table"));
+  btnBoard.addEventListener("click", ()=> setView("board"));
+
+  const saved = (()=> {
+    try { return JSON.parse(localStorage.getItem(YT_VIEW_KEY)) || "board"; }
+    catch { return "board"; }
+  })();
+  setView(saved);
+})();
+
+/* ====== LinkedIn: view toggle ====== */
+(function setupLinkedInView(){
+  const btnTable = document.getElementById("liViewTable");
+  const btnBoard = document.getElementById("liViewBoard");
+  const elTable  = document.getElementById("linkedinTable");
+  const elBoard  = document.getElementById("linkedinBoard");
+
+  if (!btnTable || !btnBoard || !elTable || !elBoard) return;
+
+  function setView(v){
+    localStorage.setItem(LI_VIEW_KEY, JSON.stringify(v));
+    const isBoard = v === "board";
+    elBoard.classList.toggle("hidden", !isBoard);
+    elTable.classList.toggle("hidden", isBoard);
+    btnBoard.classList.toggle("active", isBoard);
+    btnTable.classList.toggle("active", !isBoard);
+    if (isBoard) renderLinkedInBoard();
+    else renderGrid("LinkedIn");
+  }
+
+  btnTable.addEventListener("click", ()=> setView("table"));
+  btnBoard.addEventListener("click", ()=> setView("board"));
+
+  const saved = (()=> {
+    try { return JSON.parse(localStorage.getItem(LI_VIEW_KEY)) || "board"; }
+    catch { return "board"; }
+  })();
+  setView(saved);
+})();
+
+/* Re-render boards when typing in search or switching quick filters */
+(function wireBoardsLiveSync(){
+  const reqSearch = document.querySelector('[data-search="MattsRequests"]');
+  if (reqSearch) reqSearch.addEventListener("input", ()=> {
+    const v = JSON.parse(localStorage.getItem(REQ_VIEW_KEY) || '"board"');
+    if (v === "board") renderRequestsBoard();
+  });
+
+  const podSearch = document.querySelector('[data-search="Podcast"]');
+  if (podSearch) podSearch.addEventListener("input", ()=> {
+    const v = JSON.parse(localStorage.getItem(POD_VIEW_KEY) || '"board"');
+    if (v === "board") renderPodcastBoard();
+  });
+
+  const ytSearch = document.querySelector('[data-search="YouTube"]');
+  if (ytSearch) ytSearch.addEventListener("input", ()=> {
+    const v = JSON.parse(localStorage.getItem(YT_VIEW_KEY) || '"board"');
+    if (v === "board") renderYouTubeBoard();
+  });
+
+  const liSearch = document.querySelector('[data-search="LinkedIn"]');
+  if (liSearch) liSearch.addEventListener("input", ()=> {
+    const v = JSON.parse(localStorage.getItem(LI_VIEW_KEY) || '"board"');
+    if (v === "board") renderLinkedInBoard();
+  });
+
+  // Patch renderGrid to also refresh boards when needed
+  const _old = renderGrid;
+  renderGrid = function patchedRenderGrid(sheet){
+    _old.call(this, sheet);
+
+    if (sheet === "MattsRequests") {
+      const v = JSON.parse(localStorage.getItem(REQ_VIEW_KEY) || '"board"');
+      if (v === "board") renderRequestsBoard();
+    }
+
+    if (sheet === "Podcast") {
+      const v = JSON.parse(localStorage.getItem(POD_VIEW_KEY) || '"board"');
+      if (v === "board") renderPodcastBoard();
+    }
+
+    if (sheet === "YouTube") {
+      const v = JSON.parse(localStorage.getItem(YT_VIEW_KEY) || '"board"');
+      if (v === "board") renderYouTubeBoard();
+    }
+
+    if (sheet === "LinkedIn") {
+      const v = JSON.parse(localStorage.getItem(LI_VIEW_KEY) || '"board"');
+      if (v === "board") renderLinkedInBoard();
+    }
+    if (sheet === "Training") {
+      const v = JSON.parse(localStorage.getItem(TRAIN_VIEW_KEY) || '"board"');
+      if (v === "board") renderTrainingBoard();
+    }
+  };
+})();
+
+/* ====== Loader with cold-start guard (per sheet) ====== */
+async function loadSheetLoop(sheet, maxAttempts = 5){
+  let attempt=1, delay=900, MAX=6000;
+  while(true){
+    try{
+      let rows = await jsonpRead(sheet, Math.min(22000, 6000 + attempt*1500), 1);
+      if (rows.length === 0 && attempt === 1) {
+        try { rows = await jsonpRead(sheet, 22000, 1); } catch(_) {}
+      }
+      plannerCache[sheet] = rows.map(r=>{
+        const o={};
+        (SCHEMA[sheet]||Object.keys(r)).forEach(k=>{
+          let v = r[k] ?? "";
+          if (sheet === "Training" && k === "Progress") {
+            if (v == null || v === "") { o[k] = ""; return; }
+            if (typeof v === "number") {
+              if (v <= 1.5) v = Math.round(v * 100);
+            } else {
+              const s = String(v).trim();
+              if (/^\d+(\.\d+)?%$/.test(s)) {
+                v = Math.round(parseFloat(s));
+              } else if (/^\d+(\.\d+)?$/.test(s)) {
+                const num = parseFloat(s);
+                v = num <= 1.5 ? Math.round(num * 100) : Math.round(num);
+              }
+            }
+            o[k] = String(v).replace(/%?$/,"%");
+          } else {
+            o[k] = v;
+          }
+        });
+        return o;
+      });
+            if (sheet === "Ideas") {
+  renderIdeas();
+  renderIdeasPreview();
+} else if (sheet === "Drone") {
+        renderDronePlanner();
+      } else if (sheet === "Training") {
+        // Respect the saved Training view (table vs board)
+        let view = "board";
+        try {
+          view = JSON.parse(localStorage.getItem(TRAIN_VIEW_KEY)) || "board";
+        } catch (_) {
+          view = "board";
+        }
+
+        if (view === "board") {
+          renderTrainingBoard();
+        } else {
+          renderGrid("Training");
+        }
+      } else {
+        renderGrid(sheet);
+      }
+      updateStats();
+      renderCalendar();
+      renderMiniCalendar();
+      renderUpcomingShort();
+      renderMattPreview();
+      renderTodayFocus();
+      hideNotice();
+      markSheetLoaded(sheet);
+      break;
+    }catch(e){
+      if (attempt >= maxAttempts) { console.warn(`${sheet} load: giving up`, e); hideNotice(); break; }
+      showNotice(`${sheet}: connecting (attempt ${attempt}) — ${e.message||e}. Retrying in ${Math.round(delay/1000)}s`, { persist:true });
+      await new Promise(r=>setTimeout(r, delay));
+      delay = Math.min(Math.round(delay*1.6), MAX);
+      attempt++;
+    }
+  }
+}
+
+/* ====== INIT ====== */
+(async function init(){
+  // Global fade-in as soon as JS starts initialising
+  document.body.classList.add("app-ready");
+
+  loadSettingsUI();
+  renderCalendar();
+  renderMiniCalendar();
+  setStatusMode("loading","Loading feeds…");
+  updateProgressVisual();
+
+  const feedPromise = Promise.all([loadPodcast(), loadYouTube()])
+    .then(()=>{ feedsReady = true; if (!plannersReady) setStatusMode("feeds","Feeds ready — loading planners…"); });
+
+  const sheetNames = ["Podcast","YouTube","LinkedIn","MattsRequests","Training","Ideas","Drone"];
+  const sheetPromise = Promise.all(sheetNames.map(s=>loadSheetLoop(s)))
+    .then(()=>{ plannersReady = true; if (feedsReady) setStatusMode("ready","Ready"); });
+
+  await Promise.all([feedPromise, sheetPromise]);
+
+  updateStats();
+renderIdeasPreview();
+
+  const ctx=document.getElementById("miniChart");
+  if(ctx){
+    const map=new Map(); (rssPodcast||[]).forEach(i=>{ const d=new Date(i.pubDate); if(isNaN(d))return; const k=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; map.set(k,(map.get(k)||0)+1) });
+    const labels=[...map.keys()].sort(); const values=labels.map(k=>map.get(k));
+    new Chart(ctx,{ type:'line',
+      data:{labels,datasets:[{data:values,borderWidth:2}]},
+      options:{ maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{ticks:{color:'#9BB4A1'}},y:{ticks:{color:'#9BB4A1'}}}}
+    });
+  }
+
+  renderUpcomingShort();
+  renderMattPreview();
+  renderTodayFocus();
+  renderMarcoQuote("init");
+  const mqBtn = document.getElementById("marcoQuoteNext");
+  if (mqBtn) mqBtn.addEventListener("click", ()=>renderMarcoQuote("next"));
+
+  bumpLastUpdated();
+})();
+
+/* ====== Refresh All ====== */
+document.getElementById("refreshAll").addEventListener("click", ()=>{ 
+  feedsReady = false;
+  plannersReady = false;
+  Object.keys(sheetLoaded).forEach(k=>sheetLoaded[k]=false);
+  setStatusMode("loading","Refreshing feeds & planners…");
+  updateProgressVisual();
+  Promise.all([
+    Promise.all([loadPodcast(), loadYouTube()]).then(()=>{ feedsReady=true; if (!plannersReady) setStatusMode("feeds","Feeds ready — loading planners…"); }),
+    (async ()=>{
+      await Promise.all([
+        loadSheetLoop("Podcast"),
+        loadSheetLoop("YouTube"),
+        loadSheetLoop("LinkedIn"),
+        loadSheetLoop("MattsRequests"),
+        loadSheetLoop("Training"),
+        loadSheetLoop("Ideas"),
+        loadSheetLoop("Drone")
+      ]);
+      plannersReady = true;
+      if (feedsReady) setStatusMode("ready","Ready");
+    })()
+  ]).then(()=> { 
+    updateStats();
+    renderCalendar(); renderMiniCalendar();
+    renderUpcomingShort(); renderMattPreview(); renderTodayFocus();
+    renderMarcoQuote("init");
+    bumpLastUpdated();
+    hideNotice();
+  });
+});
+</script>
+
+</body>
+</html>
