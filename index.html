@@ -1361,16 +1361,24 @@ function bumpLastUpdated(){
 
 /* ====== Marco Quote ====== */
 const MARCO_QUOTES = [
-  { text:"Cooking is a philosophy; it’s not a recipe.", note:"— Marco Pierre White" },
+  { text:"Where's my kingfish, I want my kingfish.", note:"— Marco Pierre White" },
   { text:"Perfection is lots of little things done well.", note:"— Marco Pierre White" },
-  { text:"The key to good cooking is simplicity.", note:"— Marco Pierre White" },
+  { text:"Have the confidence to sprinkle it all over. Have that confidence. Allow your fingers to create the design. Don't force it, make it sensational.", note:"— Marco Pierre White" },
   { text:"You learn a lot more from failure than success.", note:"— Marco Pierre White" },
-  { text:"Cooking is about emotion, intensity and honesty.", note:"— Marco Pierre White" },
-  { text:"The most important ingredient in the kitchen is passion.", note:"— Marco Pierre White" },
+  { text:"No, I didn’t make Gordon Ramsay cry. He made himself cry. That was his choice to cry.", note:"— Marco Pierre White" },
+  { text:"How long for my prawns? I want my prawns. COME ON! I want my prawns, I want my prawns!", note:"— Marco Pierre White" },
   { text:"Respect the ingredients and they’ll respect you.", note:"— Marco Pierre White" },
-  { text:"Discipline is the bridge between ambition and results.", note:"— Marco Pierre White" },
-  { text:"A great plate is a story, not a stunt.", note:"— Marco Pierre White" }
+  { text:"The bitterness, the sweetness, the saltiness, the pig, the crunch.", note:"— Marco Pierre White" },
+  { text:"In 35 years of being a chef, I have never seen anybody roast potatoes with white pepper.", note:"— Marco Pierre White" },
+  { text:"Is that all you've got for 70?... Are you serious?", note:"— Marco Pierre White" },
+  { text:"Harry! Follow my instruction and you'll be safe.", note:"— Marco Pierre White" },
+  { text:"They just swam off, didn't they.", note:"— Marco Pierre White" },
+  { text:"The smoothness, the balance of honey and lemon, the crunch... all together in one.", note:"— Marco Pierre White" },
+  { text:"Just enjoy it, never let things intimidate you. And shall I tell you something... we all have bad days.", note:"— Marco Pierre White" },
+  { text:"In 35 years of being in this industry, I've never seen a dish look like that, taste so good.", note:"— Marco Pierre White" },
+  { text:"I like a pig, I like a pig a lot. Especially when it's cooked perfectly.", note:"— Marco Pierre White" }
 ];
+
 function dayOfYear(d){
   const start = new Date(d.getFullYear(),0,0);
   const diff = d - start;
@@ -2215,25 +2223,24 @@ plannerCache[sheet][i][k] = newStatus;
     });
   }
 
-  // All sheets: delete row
+    // All sheets: delete row
   grid.querySelectorAll("[data-del]").forEach(btn => {
-  btn.addEventListener("click", () => {
-    if (!ensureSheetReady("Ideas")) return;
-    const i = +btn.dataset.del;
-    if (isNaN(i) || !plannerCache.Ideas[i]) return;
+    btn.addEventListener("click", () => {
+      if (!ensureSheetReady(sheet)) return;
+      const i = +btn.dataset.del;
+      if (isNaN(i) || !plannerCache[sheet][i]) return;
 
-    plannerCache.Ideas.splice(i, 1);
-    renderIdeas();
-    renderIdeasPreview();   // 👈 add this
-    queueAutoSave("Ideas");
-    updateStats();
-    renderCalendar();
-    renderMiniCalendar();
-    renderUpcomingShort();
-    renderMattPreview();
-    renderTodayFocus();
+      plannerCache[sheet].splice(i, 1);
+      renderGrid(sheet);
+      queueAutoSave(sheet);
+      updateStats();
+      renderCalendar();
+      renderMiniCalendar();
+      renderUpcomingShort();
+      renderMattPreview();
+      renderTodayFocus();
+    });
   });
-});
 
   // After initial render, make sure Drone summary chips are correct
   if (sheet === "Drone") {
