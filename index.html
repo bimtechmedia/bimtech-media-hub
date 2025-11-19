@@ -170,6 +170,15 @@ tailwind.config = {
   .calCell { min-height: 110px; border:1px solid #1E2A33; border-radius:.5rem; padding:.5rem; background:#0F151A }
   .calCell .day { font-size:.8rem; color:#9BB4A1; margin-bottom:.25rem }
   .calItem { font-size:.75rem; margin:.2rem 0; padding:.15rem .35rem; border-radius:.35rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; border:1px solid #1E2A33 }
+/* Drag & drop visuals for calendar */
+.calItem.dragging {
+  opacity: .6;
+}
+
+.calCell.drop-target {
+  outline: 2px dashed #22c55e;
+  outline-offset: -3px;
+}
   .calItem.podcast  { background: rgba(17,147,184,.18);  border-color:#1193b8; color:#c9f1fb; }
   .calItem.youtube  { background: rgba(244,114,182,.16); border-color:#f472b6; color:#ffd9eb; }
   .calItem.linkedin { background: rgba(59,130,246,.16);  border-color:#3b82f6; color:#dbeafe; }
@@ -414,6 +423,17 @@ tailwind.config = {
   border-bottom:1px solid #1E2A33; padding:.6rem .75rem;
 }
 .req-card:last-child { border-bottom:0 }
+/* Drag & drop visuals for boards */
+.req-card.dragging {
+  opacity: .6;
+  transform: translateY(1px) scale(.99);
+}
+
+.board-col.drop-target {
+  outline: 2px dashed #22c55e;
+  outline-offset: -3px;
+  background: rgba(34,197,94,0.06);
+}
 .req-title { font-weight:600; font-size:.9rem }
 .req-meta { font-size:.7rem; color:#9BB4A1; margin-top:.25rem; display:flex; gap:.5rem; align-items:center; flex-wrap:wrap }
 .req-actions { margin-top:.5rem; display:flex; gap:.4rem; flex-wrap:wrap }
@@ -1483,13 +1503,25 @@ async function writeSheet(sheet, rows){
   return true;
 }
 
+// Track local edit activity so we don't clobber someone while they're typing
+let lastLocalEditAt = 0;
+
 /* ====== AUTOSAVE ====== */
 const SAVEQ = {}; const SAVE_DELAY = 1500;
 function queueAutoSave(sheet){
+  // Mark "local activity" for the live-sync guard
+  lastLocalEditAt = Date.now();
+
   clearTimeout(SAVEQ[sheet]);
   SAVEQ[sheet] = setTimeout(async ()=>{
-    try { await writeSheet(sheet, plannerCache[sheet]); showNotice(`${sheet}: autosaved`); setTimeout(hideNotice, 900); bumpLastUpdated(); }
-    catch(e){ showNotice(`${sheet}: autosave failed — ${e.message||e}`) }
+    try {
+      await writeSheet(sheet, plannerCache[sheet]);
+      showNotice(`${sheet}: autosaved`);
+      setTimeout(hideNotice, 900);
+      bumpLastUpdated();
+    } catch(e){
+      showNotice(`${sheet}: autosave failed — ${e.message||e}`);
+    }
   }, SAVE_DELAY);
 }
 
@@ -2366,7 +2398,8 @@ const due = dueBadgeState(r.DueDate, r.Status);
 const prioCls = prioBadgeClass(r.Priority);
 
       const card = document.createElement("div");
-      card.className = "req-card";
+card.className = "req-card";
+card.dataset.i = ridx;
 
       const title = document.createElement("div");
       title.className = "req-title";
@@ -2385,7 +2418,7 @@ meta.innerHTML = `
 `;
 card.appendChild(meta);
 
-      const actions = document.createElement("div");
+            const actions = document.createElement("div");
       actions.className = "req-actions";
       actions.innerHTML = `
         <select class="statusSel ${statusClass(r.Status)}" data-i="${ridx}" data-k="Status">
@@ -2395,6 +2428,7 @@ card.appendChild(meta);
           ].map(s=>`<option ${String(r.Status||"")===s?"selected":""}>${s}</option>`).join("")}
         </select>
         <button class="btn btn-outline text-xs" data-done="${ridx}">✅ Done</button>
+        <button class="btn btn-ghost text-xs text-red-300" data-del="${ridx}" title="Delete">🗑</button>
       `;
       card.appendChild(actions);
 
@@ -2428,6 +2462,23 @@ card.appendChild(meta);
       updateStats(); renderCalendar(); renderMiniCalendar(); renderUpcomingShort(); renderMattPreview(); renderTodayFocus();
     });
   });
+  // Delete button on board cards
+  wrap.querySelectorAll("[data-del]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (!ensureSheetReady("MattsRequests")) return;
+      const i = +btn.dataset.del;
+      if (!plannerCache.MattsRequests[i]) return;
+
+      plannerCache.MattsRequests.splice(i, 1);
+
+      queueAutoSave("MattsRequests");
+      renderRequestsBoard();
+      renderGrid("MattsRequests");
+      updateStats(); renderCalendar(); renderMiniCalendar(); renderUpcomingShort(); renderMattPreview(); renderTodayFocus();
+    });
+  });
+// Enable drag & drop on this board
+  enableBoardDragAndDrop(wrap, "MattsRequests");
 }
 
 function renderPodcastBoard() {
@@ -2486,7 +2537,8 @@ const lessonTitle   = r.LessonTitle || "(Untitled lesson)";
       const trainingType  = r.TrainingType || "";
 
       const card = document.createElement("div");
-      card.className = "req-card";
+card.className = "req-card";
+card.dataset.i = ridx;
 
       card.innerHTML = `
         <div class="req-title">${htmlesc(lessonTitle)}</div>
@@ -2519,13 +2571,14 @@ const lessonTitle   = r.LessonTitle || "(Untitled lesson)";
         "Archived"
       ];
 
-      actions.innerHTML = `
+            actions.innerHTML = `
         <select class="statusSel ${statusClass(status)}" data-i="${ridx}" data-k="Status">
           ${statusOptions.map(s =>
             `<option ${String(status || "") === s ? "selected" : ""}>${s}</option>`
           ).join("")}
         </select>
         <button class="btn btn-outline text-xs" data-done="${ridx}">✅ Done</button>
+        <button class="btn btn-ghost text-xs text-red-300" data-del="${ridx}" title="Delete">🗑</button>
       `;
 
       card.appendChild(actions);
@@ -2577,6 +2630,28 @@ const lessonTitle   = r.LessonTitle || "(Untitled lesson)";
       renderTodayFocus();
     });
   });
+  // Delete button on Podcast board cards
+  wrap.querySelectorAll("[data-del]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (!ensureSheetReady("Podcast")) return;
+      const i = +btn.dataset.del;
+      if (!plannerCache.Podcast[i]) return;
+
+      plannerCache.Podcast.splice(i, 1);
+
+      queueAutoSave("Podcast");
+      renderPodcastBoard();
+      renderGrid("Podcast");
+      updateStats();
+      renderCalendar();
+      renderMiniCalendar();
+      renderUpcomingShort();
+      renderMattPreview();
+      renderTodayFocus();
+    });
+  });
+  // Enable drag & drop on this board
+  enableBoardDragAndDrop(wrap, "Podcast");
 }
 
 function renderTrainingBoard() {
@@ -2648,7 +2723,8 @@ const plannedBadge = dueBadgeState(plannedRaw, status);
 const plannedLabel = plannedRaw ? fmtDate(plannedRaw) : "";
 
   const card = document.createElement("div");
-  card.className = "req-card";
+card.className = "req-card";
+card.dataset.i = idx;
 
   card.innerHTML = `
     <div class="req-title">${htmlesc(title)}</div>
@@ -2684,13 +2760,14 @@ const plannedLabel = plannedRaw ? fmtDate(plannedRaw) : "";
         "Completed",
       ];
 
-      actions.innerHTML = `
+            actions.innerHTML = `
         <select class="statusSel ${statusClass(status)}" data-i="${idx}" data-k="Status">
           ${statusOptions
             .map(s => `<option ${status === s ? "selected" : ""}>${s}</option>`)
             .join("")}
         </select>
         <button class="btn btn-outline text-xs" data-done="${idx}">✅ Done</button>
+        <button class="btn btn-ghost text-xs text-red-300" data-del="${idx}" title="Delete">🗑</button>
       `;
 
       card.appendChild(actions);
@@ -2729,6 +2806,26 @@ const plannedLabel = plannedRaw ? fmtDate(plannedRaw) : "";
       renderTodayFocus();
     });
   });
+  // Delete button on Training board cards
+  wrap.querySelectorAll("[data-del]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (!ensureSheetReady("Training")) return;
+      const i = +btn.dataset.del;
+      if (!plannerCache.Training[i]) return;
+
+      plannerCache.Training.splice(i, 1);
+
+      queueAutoSave("Training");
+      renderTrainingBoard();
+      renderGrid("Training");
+      updateStats();
+      renderCalendar();
+      renderMiniCalendar();
+      renderUpcomingShort();
+      renderMattPreview();
+      renderTodayFocus();
+    });
+  });
 
   // "Done" button = jump to Upload & LMS Integration
   wrap.querySelectorAll("[data-done]").forEach(btn => {
@@ -2753,6 +2850,8 @@ const plannedLabel = plannedRaw ? fmtDate(plannedRaw) : "";
       renderTodayFocus();
     });
   });
+  // Enable drag & drop on this board
+  enableBoardDragAndDrop(wrap, "Training");
 }
 
 function renderYouTubeBoard() {
@@ -2809,7 +2908,8 @@ const plannedLabel = r.Planned ? fmtDate(r.Planned) : "No date";
       const link   = r.Link || "";
 
       const card = document.createElement("div");
-      card.className = "req-card";
+card.className = "req-card";
+card.dataset.i = ridx;
 
       let thumbHtml = "";
       if (thumb) {
@@ -2851,13 +2951,14 @@ const plannedLabel = r.Planned ? fmtDate(r.Planned) : "No date";
         "Archived"
       ];
 
-      actions.innerHTML = `
+            actions.innerHTML = `
         <select class="statusSel ${statusClass(status)}" data-i="${ridx}" data-k="Status">
           ${statusOptions.map(s =>
             `<option ${String(status || "") === s ? "selected" : ""}>${s}</option>`
           ).join("")}
         </select>
         <button class="btn btn-outline text-xs" data-done="${ridx}">✅ Done</button>
+        <button class="btn btn-ghost text-xs text-red-300" data-del="${ridx}" title="Delete">🗑</button>
       `;
 
       card.appendChild(actions);
@@ -2888,6 +2989,26 @@ const plannedLabel = r.Planned ? fmtDate(r.Planned) : "No date";
       renderTodayFocus();
     });
   });
+  // Delete button on YouTube board cards
+  wrap.querySelectorAll("[data-del]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (!ensureSheetReady("YouTube")) return;
+      const i = +btn.dataset.del;
+      if (!plannerCache.YouTube[i]) return;
+
+      plannerCache.YouTube.splice(i, 1);
+
+      queueAutoSave("YouTube");
+      renderYouTubeBoard();
+      renderGrid("YouTube");
+      updateStats();
+      renderCalendar();
+      renderMiniCalendar();
+      renderUpcomingShort();
+      renderMattPreview();
+      renderTodayFocus();
+    });
+  });
 
   // "✅ Done" on board sets status => Uploaded (completed)
   wrap.querySelectorAll("[data-done]").forEach(btn => {
@@ -2909,6 +3030,8 @@ const plannedLabel = r.Planned ? fmtDate(r.Planned) : "No date";
       renderTodayFocus();
     });
   });
+  // Enable drag & drop on this board
+  enableBoardDragAndDrop(wrap, "YouTube");
 }
 
 function renderLinkedInBoard() {
@@ -2960,6 +3083,7 @@ function renderLinkedInBoard() {
 
       const card = document.createElement("div");
 card.className = "req-card"; // reuse card styling
+card.dataset.i = ridx;
 
 const title = document.createElement("div");
 title.className = "req-title";
@@ -2980,7 +3104,7 @@ meta.innerHTML = `
 `;
 card.appendChild(meta);
 
-      const actions = document.createElement("div");
+            const actions = document.createElement("div");
       actions.className = "req-actions";
       actions.innerHTML = `
         <select class="statusSel ${statusClass(r.Status)}" data-i="${ridx}" data-k="Status">
@@ -2995,6 +3119,7 @@ card.appendChild(meta);
           ].map(s=>`<option ${String(r.Status||"")===s?"selected":""}>${s}</option>`).join("")}
         </select>
         <button class="btn btn-outline text-xs" data-done="${ridx}">✅ Done</button>
+        <button class="btn btn-ghost text-xs text-red-300" data-del="${ridx}" title="Delete">🗑</button>
       `;
       card.appendChild(actions);
 
@@ -3030,6 +3155,145 @@ card.appendChild(meta);
       renderLinkedInBoard();
       renderGrid("LinkedIn");
       updateStats(); renderCalendar(); renderMiniCalendar(); renderUpcomingShort(); renderMattPreview(); renderTodayFocus();
+    });
+  });
+  // Delete button on LinkedIn board cards
+  wrap.querySelectorAll("[data-del]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (!ensureSheetReady("LinkedIn")) return;
+      const i = +btn.dataset.del;
+      if (!plannerCache.LinkedIn[i]) return;
+
+      plannerCache.LinkedIn.splice(i, 1);
+
+      queueAutoSave("LinkedIn");
+      renderLinkedInBoard();
+      renderGrid("LinkedIn");
+      updateStats(); renderCalendar(); renderMiniCalendar(); renderUpcomingShort(); renderMattPreview(); renderTodayFocus();
+    });
+  });
+  // Enable drag & drop on this board
+  enableBoardDragAndDrop(wrap, "LinkedIn");
+}
+
+/* ====== Generic board drag & drop ====== */
+function enableBoardDragAndDrop(wrap, sheet) {
+  if (!wrap) return;
+
+  // Make each card draggable
+  wrap.querySelectorAll(".req-card").forEach(card => {
+    const idx = Number(card.dataset.i);
+    if (!Number.isFinite(idx)) return;
+
+    card.setAttribute("draggable", "true");
+
+    card.addEventListener("dragstart", e => {
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", `${sheet}::${idx}`);
+      card.classList.add("dragging");
+    });
+
+    card.addEventListener("dragend", () => {
+      card.classList.remove("dragging");
+    });
+  });
+
+  // Allow dropping on each column
+  wrap.querySelectorAll(".board-col").forEach(col => {
+    const titleEl = col.querySelector("header .title");
+    if (!titleEl) return;
+
+    // Column title as shown on the board
+    let newStatus = titleEl.textContent.trim();
+
+    // Normalise board column → real Status value in the sheet
+    if (sheet === "Training") {
+      // Training board columns:
+      //   Scripting & Design → Script Adaption
+      //   Production         → Voiceover Recording
+      //   Review             → Internal Review
+      //   Delivery           → Upload & LMS Integration
+      const trainingStatusMap = {
+        "Scripting & Design": "Script Adaption",
+        "Production": "Voiceover Recording",
+        "Review": "Internal Review",
+        "Delivery": "Upload & LMS Integration",
+      };
+      newStatus = trainingStatusMap[newStatus] || newStatus;
+    } else if (sheet === "Podcast") {
+      // Podcast board columns:
+      //   Idea, Scheduled, Edited, Scheduled Go-Live, Published
+      // "Edited" should actually set Status to "Editing"
+      const podcastStatusMap = {
+        "Idea": "Idea",
+        "Scheduled": "Scheduled",
+        "Edited": "Editing",
+        "Scheduled Go-Live": "Scheduled Go-Live",
+        "Published": "Published",
+      };
+      newStatus = podcastStatusMap[newStatus] || newStatus;
+    } else if (sheet === "YouTube") {
+      // YouTube board columns:
+      //   Idea, Scheduled, Edited, Scheduled Upload, Uploaded
+      // "Edited" should actually set Status to "Editing"
+      const ytStatusMap = {
+        "Idea": "Idea",
+        "Scheduled": "Scheduled",
+        "Edited": "Editing",
+        "Scheduled Upload": "Scheduled Upload",
+        "Uploaded": "Uploaded",
+      };
+      newStatus = ytStatusMap[newStatus] || newStatus;
+    }
+    // For Matt's Requests + LinkedIn the column titles already match Status, so no mapping needed.
+
+    col.addEventListener("dragover", e => {
+      e.preventDefault();
+      col.classList.add("drop-target");
+    });
+
+    col.addEventListener("dragleave", () => {
+      col.classList.remove("drop-target");
+    });
+
+    col.addEventListener("drop", e => {
+      e.preventDefault();
+      col.classList.remove("drop-target");
+
+      const payload = e.dataTransfer.getData("text/plain") || "";
+      if (!payload.includes("::")) return;
+      const [payloadSheet, idxStr] = payload.split("::");
+      if (payloadSheet !== sheet) return;
+
+      const idx = Number(idxStr);
+      const rows = plannerCache[sheet] || [];
+      if (!rows[idx]) return;
+
+      // Update status in the sheet (using the normalised value)
+      rows[idx].Status = newStatus;
+
+      queueAutoSave(sheet);
+
+      // Re-render board + grid + calendar bits
+      if (sheet === "MattsRequests") {
+        renderRequestsBoard();
+      } else if (sheet === "Podcast") {
+        renderPodcastBoard();
+      } else if (sheet === "YouTube") {
+        renderYouTubeBoard();
+      } else if (sheet === "LinkedIn") {
+        renderLinkedInBoard();
+      } else if (sheet === "Training") {
+        renderTrainingBoard();
+      }
+
+      renderGrid(sheet);
+      updateStats();
+      renderCalendar();
+      renderMiniCalendar();
+      renderUpcomingShort();
+      renderMattPreview();
+      renderTodayFocus();
     });
   });
 }
@@ -3869,19 +4133,54 @@ function renderDronePlanner() {
 /* ====== Calendar helpers ====== */
 let calCursor = new Date();
 function collectCalendarEvents(){
-  const push = (arr, dateStr, label, kind, href=null)=>{
+  const push = (arr, dateStr, label, kind, sheet, index, href=null)=>{
     if(!dateStr) return;
     const d = parseDateFlexible(dateStr);
     if (isNaN(d)) return;
-    arr.push({ date: d, label, kind, href });
+    arr.push({ date: d, label, kind, sheet, index, href });
   };
+
   const events = [];
-  (plannerCache.Podcast||[]).forEach(r=> push(events, r.Planned, r.Title || "(Untitled Podcast)", "podcast"));
-  (plannerCache.YouTube||[]).forEach(r=> push(events, r.Planned, r.Title || "(Untitled Video)", "youtube", r.Link||null));
-  (plannerCache.LinkedIn||[]).forEach(r=> push(events, r.Planned, r.Title || "(LinkedIn Post)", "linkedin", r.Link||null));
-  (plannerCache.Training||[]).forEach(r=> push(events, r.Planned || r.DueDate || "", (r.Module?`${r.Module}: `:"")+(r.VideoTitle||"(Training)")+(r.Progress?` [${r.Progress}]`:""), "training"));
-  (plannerCache.MattsRequests||[]).forEach(r=> push(events, r.DueDate, (r.Request||"(Request)")+(r.Owner?` [${r.Owner}]`:""), "request"));
-  (plannerCache.Drone||[]).forEach(r=> push(events, r.Planned, r.Title || "(Drone Flight)", "drone", r.DocsLink || null));
+  (plannerCache.Podcast||[]).forEach((r,i)=>
+    push(events, r.Planned, r.Title || "(Untitled Podcast)", "podcast", "Podcast", i)
+  );
+  (plannerCache.YouTube||[]).forEach((r,i)=>
+    push(events, r.Planned, r.Title || "(Untitled Video)", "youtube", "YouTube", i, r.Link||null)
+  );
+  (plannerCache.LinkedIn||[]).forEach((r,i)=>
+    push(events, r.Planned, r.Title || "(LinkedIn Post)", "linkedin", "LinkedIn", i, r.Link||null)
+  );
+  (plannerCache.Training||[]).forEach((r,i)=>
+    push(
+      events,
+      r.Planned || r.DueDate || "",
+      (r.Module?`${r.Module}: `:"")+(r.VideoTitle||"(Training)")+(r.Progress?` [${r.Progress}]`:""),
+      "training",
+      "Training",
+      i
+    )
+  );
+  (plannerCache.MattsRequests||[]).forEach((r,i)=>
+    push(
+      events,
+      r.DueDate,
+      (r.Request||"(Request)")+(r.Owner?` [${r.Owner}]`:""),
+      "request",
+      "MattsRequests",
+      i
+    )
+  );
+  (plannerCache.Drone||[]).forEach((r,i)=>
+    push(
+      events,
+      r.Planned,
+      r.Title || "(Drone Flight)",
+      "drone",
+      "Drone",
+      i,
+      r.DocsLink || null
+    )
+  );
   return events;
 }
 function sameDay(a,b){ return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate(); }
@@ -3916,23 +4215,93 @@ function renderCalendar(){
     grid.appendChild(d);
   }
 
-  for(let day=1; day<=daysInMonth; day++){
+    for(let day=1; day<=daysInMonth; day++){
     const d = new Date(year, month, day);
     const cell = document.createElement("div");
     cell.className = "calCell";
     if (sameDay(d, today)) cell.classList.add("calToday");
+
+    // Store ISO date for this cell
+    const isoDate = toInputDate(
+      `${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`
+    );
+    cell.dataset.date = isoDate;
 
     const head = document.createElement("div");
     head.className = "day";
     head.textContent = day;
     cell.appendChild(head);
 
+    // Make the day cell a drop target
+    cell.addEventListener("dragover", e => {
+      e.preventDefault();
+      cell.classList.add("drop-target");
+    });
+
+    cell.addEventListener("dragleave", () => {
+      cell.classList.remove("drop-target");
+    });
+
+    cell.addEventListener("drop", e => {
+      e.preventDefault();
+      cell.classList.remove("drop-target");
+
+      const payload = e.dataTransfer.getData("text/plain") || "";
+      if (!payload.includes("::")) return;
+      const [sheet, idxStr] = payload.split("::");
+      const idx = Number(idxStr);
+      if (!sheet || !Number.isFinite(idx)) return;
+
+      const rows = plannerCache[sheet] || [];
+      if (!rows[idx]) return;
+
+      const row = rows[idx];
+
+      // Which date field to update?
+      const field = (sheet === "MattsRequests") ? "DueDate" : "Planned";
+      const newDate = toSheetDate(isoDate);
+      row[field] = newDate;
+
+      queueAutoSave(sheet);
+
+      // Re-render calendars + affected views
+      renderCalendar();
+      renderMiniCalendar();
+      renderUpcomingShort();
+      renderMattPreview();
+      renderTodayFocus();
+
+      if (sheet === "Drone") {
+        renderDronePlanner();
+      } else if (sheet === "Ideas") {
+        renderIdeas();
+        renderIdeasPreview();
+      } else {
+        renderGrid(sheet);
+      }
+
+      updateStats();
+    });
+
+    // Render events + make them draggable
     evts.filter(e => sameDay(e.date, d))
         .slice(0,6)
         .forEach(e => {
           const item = document.createElement("div");
-          item.className = "calItem "+e.kind;
+          item.className = "calItem " + e.kind;
           item.title = e.label;
+          item.setAttribute("draggable", "true");
+
+          item.addEventListener("dragstart", ev => {
+            ev.dataTransfer.effectAllowed = "move";
+            ev.dataTransfer.setData("text/plain", `${e.sheet}::${e.index}`);
+            item.classList.add("dragging");
+          });
+
+          item.addEventListener("dragend", () => {
+            item.classList.remove("dragging");
+          });
+
           if (e.href) {
             const a = document.createElement("a");
             a.href = e.href; a.target = "_blank"; a.className = "underline";
@@ -4973,6 +5342,136 @@ async function loadSheetLoop(sheet, maxAttempts = 5){
   }
 }
 
+// ====== LIVE COLLAB: background polling ======
+const LIVE_SHEETS = ["Podcast","YouTube","LinkedIn","MattsRequests","Training","Ideas","Drone"];
+const LIVE_POLL_MS = 45000; // every 45s – safe default for Apps Script
+const REMOTE_SNAPSHOT = {};
+
+// Normalise rows like loadSheetLoop does, so types stay consistent
+function normalizeRowsForSheet(sheet, rows) {
+  return rows.map(r => {
+    const o = {};
+    (SCHEMA[sheet] || Object.keys(r)).forEach(k => {
+      let v = r[k] ?? "";
+
+      if (sheet === "Training" && k === "Progress") {
+        if (v == null || v === "") {
+          o[k] = "";
+          return;
+        }
+        if (typeof v === "number") {
+          if (v <= 1.5) v = Math.round(v * 100);
+        } else {
+          const s = String(v).trim();
+          if (/^\d+(\.\d+)?%$/.test(s)) {
+            v = Math.round(parseFloat(s));
+          } else if (/^\d+(\.\d+)?$/.test(s)) {
+            const num = parseFloat(s);
+            v = num <= 1.5 ? Math.round(num * 100) : Math.round(num);
+          }
+        }
+        o[k] = String(v).replace(/%?$/,"%");
+      } else {
+        o[k] = v;
+      }
+    });
+    return o;
+  });
+}
+
+function sheetHash(rows) {
+  try {
+    return JSON.stringify(rows || []);
+  } catch {
+    return "";
+  }
+}
+
+async function fetchSheetSnapshot(sheet) {
+  try {
+    // Single-shot read; lighter than loadSheetLoop
+    const rows = await jsonpRead(sheet, 8000, 0);
+    return normalizeRowsForSheet(sheet, rows);
+  } catch (e) {
+    // Fail soft – just skip this round
+    console.warn("Live sync read failed for", sheet, e);
+    return null;
+  }
+}
+
+async function pollLiveSheetsOnce(){
+  // Don't touch anything if we were editing in the last 5 seconds
+  if (Date.now() - lastLocalEditAt < 5000) return;
+
+  for (const sheet of LIVE_SHEETS) {
+    const fresh = await fetchSheetSnapshot(sheet);
+    if (!fresh) continue;
+
+    const newHash = sheetHash(fresh);
+    if (!REMOTE_SNAPSHOT[sheet]) {
+      REMOTE_SNAPSHOT[sheet] = newHash;
+      continue; // first baseline
+    }
+
+    if (REMOTE_SNAPSHOT[sheet] === newHash) continue; // no change
+
+    // At this point, someone has changed the sheet in Google Sheets
+    REMOTE_SNAPSHOT[sheet] = newHash;
+
+    // Update local cache + re-render, but only if we're still idle
+    if (Date.now() - lastLocalEditAt < 5000) continue;
+
+    plannerCache[sheet] = fresh;
+
+    // Re-render the relevant bits
+    if (sheet === "Ideas") {
+      renderIdeas();
+      renderIdeasPreview();
+    } else if (sheet === "Drone") {
+      renderDronePlanner();
+    } else if (sheet === "Training") {
+      const v = JSON.parse(localStorage.getItem("train_view") || '"board"');
+      if (v === "board") renderTrainingBoard();
+      else renderGrid("Training");
+    } else if (sheet === "MattsRequests") {
+      const v = JSON.parse(localStorage.getItem("req_view") || '"board"');
+      if (v === "board") renderRequestsBoard();
+      else renderGrid("MattsRequests");
+    } else if (sheet === "Podcast") {
+      const v = JSON.parse(localStorage.getItem("pod_view") || '"board"');
+      if (v === "board") renderPodcastBoard();
+      else renderGrid("Podcast");
+    } else if (sheet === "YouTube") {
+      const v = JSON.parse(localStorage.getItem("yt_view") || '"board"');
+      if (v === "board") renderYouTubeBoard();
+      else renderGrid("YouTube");
+    } else if (sheet === "LinkedIn") {
+      const v = JSON.parse(localStorage.getItem("li_view") || '"board"');
+      if (v === "board") renderLinkedInBoard();
+      else renderGrid("LinkedIn");
+    }
+
+    updateStats();
+    renderCalendar();
+    renderMiniCalendar();
+    renderUpcomingShort();
+    renderMattPreview();
+    renderTodayFocus();
+
+    showNotice(`Live update pulled for ${sheet} (someone else changed it)`);
+    setTimeout(hideNotice, 2000);
+  }
+}
+
+function startLiveCollabWatcher(){
+  // Prime snapshot from current cache
+  LIVE_SHEETS.forEach(sheet => {
+    REMOTE_SNAPSHOT[sheet] = sheetHash(plannerCache[sheet]);
+  });
+
+  setInterval(pollLiveSheetsOnce, LIVE_POLL_MS);
+}
+
 /* ====== INIT ====== */
 (async function init(){
   // Global fade-in as soon as JS starts initialising
@@ -4992,6 +5491,7 @@ async function loadSheetLoop(sheet, maxAttempts = 5){
     .then(()=>{ plannersReady = true; if (feedsReady) setStatusMode("ready","Ready"); });
 
   await Promise.all([feedPromise, sheetPromise]);
+startLiveCollabWatcher();
 
   updateStats();
 renderIdeasPreview();
