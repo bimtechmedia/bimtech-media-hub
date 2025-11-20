@@ -88,7 +88,11 @@ tailwind.config = {
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 
 <style>
-  :root { color-scheme: dark; --dash-h: 420px; }
+  :root {
+  color-scheme: dark;
+  --dash-h: 420px;       /* top 3 cards */
+  --dash-h-short: 265px; /* bottom 6 cards (shorter) */
+}
 
   /* Global fade-in */
   body {
@@ -112,7 +116,12 @@ tailwind.config = {
   .btn-outline:hover { box-shadow: 0 0 0 3px rgba(30,42,51,.6), 0 6px 16px rgba(0,0,0,.35); transform: translateY(-1px) }
   .btn:active { transform: translateY(0); box-shadow:none }
   .badge { background:#1193b8; color:#fff; font-size:.75rem; padding:.25rem .5rem; border-radius:.5rem }
-  .grid3 { display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap:1rem }
+  .grid3 {
+  display:grid;
+  grid-template-columns: repeat(3, minmax(0,1fr));
+  gap:1rem;
+  align-items:flex-start; /* STOP stretching cards vertically */
+}
   @media (max-width: 1200px) { .grid3 { grid-template-columns: repeat(2, minmax(0,1fr)) } }
   @media (max-width: 800px)  { .grid3 { grid-template-columns: 1fr } }
   .text-dim { color:#9BB4A1 }
@@ -194,6 +203,10 @@ tailwind.config = {
     flex-direction:column;
     position:relative;   /* overlay anchor */
   }
+/* SHORTER bottom dashboard cards */
+.dashCardShort {
+  height: var(--dash-h-short);
+}
   .dashHead { flex: 0 0 auto; }
   .dashBody {
     flex: 1 1 auto;
@@ -604,84 +617,119 @@ tailwind.config = {
       </div>
     </div>
 
-    <!-- Summary -->
-    <div class="card p-4">
-      <h3 class="font-semibold text-lg mb-2">Summary</h3>
-      <!-- Skeleton summary -->
-      <div id="summarySkeleton" class="grid grid-cols-2 gap-3">
-        <div class="card p-3">
-          <div class="skeleton skeleton-sm w-20"></div>
-          <div class="mt-2 skeleton skeleton-lg"></div>
-        </div>
-        <div class="card p-3">
-          <div class="skeleton skeleton-sm w-20"></div>
-          <div class="mt-2 skeleton skeleton-lg"></div>
-        </div>
-        <div class="card p-3">
-          <div class="skeleton skeleton-sm w-24"></div>
-          <div class="mt-2 skeleton skeleton-lg"></div>
-        </div>
-        <div class="card p-3">
-          <div class="skeleton skeleton-sm w-16"></div>
-          <div class="mt-2 skeleton skeleton-lg"></div>
+        <!-- Summary -->
+    <div class="card p-4 dashCard dashCardShort">
+      <div class="dashHead flex items-center justify-between gap-2">
+        <div>
+          <h3 class="font-semibold text-lg">Summary</h3>
+          <p class="text-xs text-dim">High-level stats across all planners & ideas.</p>
         </div>
       </div>
-      <!-- Real stats -->
-      <div id="summaryStats" class="grid grid-cols-2 gap-3 hidden">
-        <div class="card p-3">
-          <div class="text-dim text-xs">Podcast Episodes</div>
-          <div id="statEpisodes" class="text-2xl font-bold">—</div>
+      <div class="dashBody mt-3">
+        <!-- Skeleton summary -->
+        <div id="summarySkeleton" class="grid grid-cols-2 gap-3">
+          <div class="card p-3">
+            <div class="skeleton skeleton-sm w-20"></div>
+            <div class="mt-2 skeleton skeleton-lg"></div>
+          </div>
+          <div class="card p-3">
+            <div class="skeleton skeleton-sm w-20"></div>
+            <div class="mt-2 skeleton skeleton-lg"></div>
+          </div>
+          <div class="card p-3">
+            <div class="skeleton skeleton-sm w-24"></div>
+            <div class="mt-2 skeleton skeleton-lg"></div>
+          </div>
+          <div class="card p-3">
+            <div class="skeleton skeleton-sm w-16"></div>
+            <div class="mt-2 skeleton skeleton-lg"></div>
+          </div>
         </div>
-        <div class="card p-3">
-          <div class="text-dim text-xs">YouTube Videos</div>
-          <div id="statYT" class="text-2xl font-bold">—</div>
-        </div>
-        <div class="card p-3">
-          <div class="text-dim text-xs">Planner Items</div>
-          <div id="statPlanners" class="text-2xl font-bold">—</div>
-        </div>
-        <div class="card p-3">
-          <div class="text-dim text-xs">Ideas</div>
-          <div id="statIdeas" class="text-2xl font-bold">—</div>
+        <!-- Real stats -->
+        <div id="summaryStats" class="grid grid-cols-2 gap-3 hidden">
+          <div class="card p-3">
+            <div class="text-dim text-xs">Podcast Episodes</div>
+            <div id="statEpisodes" class="text-2xl font-bold">—</div>
+          </div>
+          <div class="card p-3">
+            <div class="text-dim text-xs">YouTube Videos</div>
+            <div id="statYT" class="text-2xl font-bold">—</div>
+          </div>
+          <div class="card p-3">
+            <div class="text-dim text-xs">Planner Items</div>
+            <div id="statPlanners" class="text-2xl font-bold">—</div>
+          </div>
+          <div class="card p-3">
+            <div class="text-dim text-xs">Ideas</div>
+            <div id="statIdeas" class="text-2xl font-bold">—</div>
+          </div>
         </div>
       </div>
     </div>
 
     <!-- Ideas preview -->
-    <div class="card p-4">
-      <h3 class="font-semibold text-lg mb-2">Latest Ideas</h3>
-      <div id="ideasPreviewSkeleton" class="space-y-2">
-        <div class="skeleton skeleton-md"></div>
-        <div class="skeleton skeleton-md"></div>
-        <div class="skeleton skeleton-md"></div>
+    <div class="card p-4 dashCard dashCardShort">
+      <div class="dashHead flex items-center justify-between gap-2">
+        <h3 class="font-semibold text-lg">Latest Ideas</h3>
+        <button id="goToIdeasFromDash"
+                class="btn btn-outline btn-xs text-[11px] px-2 py-1">
+          View Ideas Board
+        </button>
       </div>
-      <div id="ideasPreview" class="text-sm space-y-2 hidden"></div>
+      <div class="dashBody mt-2">
+        <div id="ideasPreviewSkeleton" class="space-y-2">
+          <div class="skeleton skeleton-md"></div>
+          <div class="skeleton skeleton-md"></div>
+          <div class="skeleton skeleton-md"></div>
+        </div>
+        <div id="ideasPreview" class="text-sm space-y-2 hidden"></div>
+      </div>
     </div>
 
     <!-- Activity chart -->
-    <div class="card p-4">
-      <h3 class="font-semibold text-lg mb-2">Activity (last 12 months)</h3>
-      <div class="miniChartWrap"><canvas id="miniChart"></canvas></div>
+    <div class="card p-4 dashCard dashCardShort">
+      <div class="dashHead flex items-center justify-between gap-2">
+        <h3 class="font-semibold text-lg">Activity (last 12 months)</h3>
+      </div>
+      <div class="dashBody mt-2">
+        <div class="miniChartWrap">
+          <canvas id="miniChart"></canvas>
+        </div>
+      </div>
     </div>
 
     <!-- Upcoming 7 days -->
-    <div class="card p-4">
-      <h3 class="font-semibold text-lg mb-2">Next 7 Days</h3>
-      <div id="upcomingShort" class="text-sm"></div>
+    <div class="card p-4 dashCard dashCardShort">
+      <div class="dashHead flex items-center justify-between gap-2">
+        <h3 class="font-semibold text-lg">Next 7 Days</h3>
+      </div>
+      <div class="dashBody mt-2">
+        <div id="upcomingShort" class="text-sm space-y-1"></div>
+      </div>
     </div>
 
     <!-- Matt's open requests -->
-    <div class="card p-4">
-      <h3 class="font-semibold text-lg mb-2">Matt’s Open Requests</h3>
-      <div id="mattPreview" class="text-sm"></div>
+    <div class="card p-4 dashCard dashCardShort">
+      <div class="dashHead flex items-center justify-between gap-2">
+        <h3 class="font-semibold text-lg">Matt’s Open Requests</h3>
+      </div>
+      <div class="dashBody mt-2">
+        <div id="mattPreview" class="text-sm space-y-1"></div>
+      </div>
     </div>
 
     <!-- Marco quote -->
-    <div class="card p-4">
-      <h3 class="font-semibold text-lg mb-2">Marco Pierre White — Quote of the Day</h3>
-      <div id="marcoQuoteText" class="text-sm italic mb-2">Loading quote…</div>
-      <div id="marcoQuoteMeta" class="text-xs text-dim">— Marco Pierre White</div>
-      <button id="marcoQuoteNext" class="btn btn-outline mt-3 text-xs">New quote</button>
+    <div class="card p-4 dashCard dashCardShort">
+      <div class="dashHead flex items-center justify-between gap-2">
+        <h3 class="font-semibold text-lg">Marco Pierre White — Quote of the Day</h3>
+      </div>
+      <div class="dashBody mt-2">
+        <div id="marcoQuoteText" class="text-sm italic mb-2">Loading quote…</div>
+        <div id="marcoQuoteMeta" class="text-xs text-dim">— Marco Pierre White</div>
+        <button id="marcoQuoteNext" class="btn btn-outline mt-3 text-xs">
+          New quote
+        </button>
+      </div>
     </div>
   </div>
 </section>
@@ -1176,74 +1224,82 @@ function ensureSheetReady(sheet){
 }
 
 /* ====== Ideas Preview (dashboard card) ====== */
-function renderIdeasPreview(){
+function renderIdeasPreview() {
   const ideasPrev = document.getElementById("ideasPreview");
   const ideasSk   = document.getElementById("ideasPreviewSkeleton");
   if (!ideasPrev) return;
 
-  const rows = [];
+  const items = [];
 
-  // Helper: push a normalised "idea" item
-  function pushIdea({ title, meta, date, notes }) {
+  // Normalised "idea" object with source info
+  function pushIdea({ title, meta, date, notes, sheet, index }) {
     if (!title && !notes) return;
-    rows.push({ title, meta, date, notes });
+    if (!sheet) sheet = "Ideas";
+    if (typeof index !== "number") index = -1;
+    items.push({ title, meta, date, notes, sheet, index });
+  }
+
+  // Helper to decide if a row is in "idea phase"
+  function isIdeaStatus(status) {
+    return /idea/i.test(String(status || ""));
   }
 
   // 1) Native Ideas tab (always included)
-  (plannerCache.Ideas || []).forEach(r => {
+  (plannerCache.Ideas || []).forEach((r, i) => {
     pushIdea({
-      title: r.Idea || "(Untitled idea)",
+      sheet: "Ideas",
+      index: i,
+      title: r.Idea || "(Untitled)",
       meta: r.Category ? `Ideas • ${r.Category}` : "Ideas",
       date: r.Created || "",
       notes: r.Notes || ""
     });
   });
 
-  // Helper to detect explicit "Idea" status
-  function isIdeaStatus(status) {
-    return /idea/i.test(String(status || ""));
-  }
+  // 2) Podcast — anything whose bucket is Idea OR Status contains "idea"
+(plannerCache.Podcast || []).forEach((r, i) => {
+  const status = r.Status;
+  let bucket = "";
+  try {
+    bucket = podcastBucketForStatus(status);
+  } catch (_) {}
 
-  // 2) Podcast — anything that lives in the Idea column OR has Status containing "Idea"
-  (plannerCache.Podcast || []).forEach(r => {
-    const status = r.Status;
-    let bucket = "";
-    try {
-      bucket = podcastBucketForStatus(status);
-    } catch (_) {}
+  const inIdeaPhase = isIdeaStatus(status) || bucket === "Idea";
+  if (!inIdeaPhase) return;
 
-    const inIdeaPhase = isIdeaStatus(status) || bucket === "Idea";
-    if (!inIdeaPhase) return;
-
-    pushIdea({
-      title: r.Title || "(Untitled episode)",
-      meta: r.Guest ? `Podcast • ${r.Guest}` : "Podcast",
-      date: r.Planned || "",
-      notes: r.Notes || ""
-    });
+  pushIdea({
+    sheet: "Podcast",
+    index: i,
+    title: r.Title || "(Untitled episode)",
+    meta: r.Guest ? `Podcast • ${r.Guest}` : "Podcast",
+    date: r.Planned || "",
+    notes: r.Notes || ""
   });
+});
 
-  // 3) YouTube — Idea bucket or explicit "Idea" status
-  (plannerCache.YouTube || []).forEach(r => {
-    const status = r.Status;
-    let bucket = "";
-    try {
-      bucket = youtubeBucketForStatus(status);
-    } catch (_) {}
+  // 3) YouTube — anything whose bucket is Idea OR Status contains "idea"
+(plannerCache.YouTube || []).forEach((r, i) => {
+  const status = r.Status;
+  let bucket = "";
+  try {
+    bucket = youtubeBucketForStatus(status);
+  } catch (_) {}
 
-    const inIdeaPhase = isIdeaStatus(status) || bucket === "Idea";
-    if (!inIdeaPhase) return;
+  const inIdeaPhase = isIdeaStatus(status) || bucket === "Idea";
+  if (!inIdeaPhase) return;
 
-    pushIdea({
-      title: r.Title || "(Untitled video)",
-      meta: "YouTube",
-      date: r.Planned || "",
-      notes: r.Notes || ""
-    });
+  pushIdea({
+    sheet: "YouTube",
+    index: i,
+    title: r.Title || "(Untitled video)",
+    meta: "YouTube",
+    date: r.Planned || "",
+    notes: r.Notes || ""
   });
+});
 
   // 4) LinkedIn — Idea bucket or explicit "Idea" status
-  (plannerCache.LinkedIn || []).forEach(r => {
+  (plannerCache.LinkedIn || []).forEach((r, i) => {
     const status = r.Status;
     let bucket = "";
     try {
@@ -1254,6 +1310,8 @@ function renderIdeasPreview(){
     if (!inIdeaPhase) return;
 
     pushIdea({
+      sheet: "LinkedIn",
+      index: i,
       title: r.Title || "(Untitled post)",
       meta: r.Type ? `LinkedIn • ${r.Type}` : "LinkedIn",
       date: r.Planned || "",
@@ -1262,9 +1320,11 @@ function renderIdeasPreview(){
   });
 
   // 5) Matt’s Requests — treat "Idea" status as ideation
-  (plannerCache.MattsRequests || []).forEach(r => {
+  (plannerCache.MattsRequests || []).forEach((r, i) => {
     if (!isIdeaStatus(r.Status)) return;
     pushIdea({
+      sheet: "MattsRequests",
+      index: i,
       title: r.Request || "(Request idea)",
       meta: r.Owner ? `Matt’s Request • ${r.Owner}` : "Matt’s Request",
       date: r.DueDate || "",
@@ -1273,7 +1333,7 @@ function renderIdeasPreview(){
   });
 
   // 6) Training — rows in idea phase
-  (plannerCache.Training || []).forEach(r => {
+  (plannerCache.Training || []).forEach((r, i) => {
     if (!isIdeaStatus(r.Status)) return;
     const lessonTitle =
       r.LessonTitle || r.VideoTitle || r.ModuleName || "(Training idea)";
@@ -1281,6 +1341,8 @@ function renderIdeasPreview(){
     if (r.TrainingType) metaBits.push(r.TrainingType);
     if (r.ModuleName)   metaBits.push(r.ModuleName);
     pushIdea({
+      sheet: "Training",
+      index: i,
       title: lessonTitle,
       meta: metaBits.length ? `Training • ${metaBits.join(" • ")}` : "Training",
       date: r.Planned || r.DueDate || "",
@@ -1289,9 +1351,11 @@ function renderIdeasPreview(){
   });
 
   // 7) Drone — if you ever mark drone work as Idea
-  (plannerCache.Drone || []).forEach(r => {
+  (plannerCache.Drone || []).forEach((r, i) => {
     if (!isIdeaStatus(r.Status)) return;
     pushIdea({
+      sheet: "Drone",
+      index: i,
       title: r.Title || "(Drone idea)",
       meta: r.Site ? `Drone • ${r.Site}` : "Drone",
       date: r.Planned || "",
@@ -1299,37 +1363,148 @@ function renderIdeasPreview(){
     });
   });
 
-  // Sort newest-first by date (fallback to "oldest" if no date)
-  rows.sort((a,b)=>{
+  // Sort newest-first by date (fallback to very old if blank)
+  items.sort((a, b) => {
     const da = a.date ? parseDateFlexible(a.date) : new Date(0);
     const db = b.date ? parseDateFlexible(b.date) : new Date(0);
     return db - da;
   });
 
-  // If still nothing, show a friendly empty state
-  if (!rows.length) {
+  // Empty state
+  if (!items.length) {
     ideasPrev.innerHTML = `
       <div class="text-sm text-dim">
         No idea-phase items yet.  
         Mark something as <b>Idea</b> in any planner, or add a card in the <b>Ideas</b> tab to see it here.
       </div>
     `;
-  } else {
-    ideasPrev.innerHTML = rows.slice(0,5).map(r=>`
-      <div class="border border-[#1E2A33] rounded-md p-2">
-        <div class="font-semibold">${htmlesc(r.title || "(Untitled idea)")}</div>
-        <div class="text-xs text-dim">
-          ${htmlesc(r.meta || "")}${
-            r.date ? ` · ${fmtDate(r.date)}` : ""
-          }
-        </div>
-        <div class="text-sm mt-1 line-clamp-3">${htmlesc(r.notes || "")}</div>
-      </div>
-    `).join("");
+    if (ideasSk) ideasSk.classList.add("hidden");
+    ideasPrev.classList.remove("hidden");
+    return;
   }
+
+ // Render *all* ideas as clickable buttons with source info
+ideasPrev.innerHTML = items.map(r => `
+  <button
+    type="button"
+    class="w-full text-left border border-[#1E2A33] rounded-md p-2 hover:border-[#1193b8] hover:bg-[#0F151A]"
+    data-idea-sheet="${r.sheet}"
+    data-idea-index="${r.index}"
+  >
+    <div class="font-semibold">${htmlesc(r.title || "(Untitled idea)")}</div>
+    <div class="text-xs text-dim">
+      ${htmlesc(r.meta || "")}${
+        r.date ? ` · ${fmtDate(toInputDate(r.date))}` : ""
+      }
+    </div>
+    <div class="text-sm mt-1 line-clamp-3">${htmlesc(r.notes || "")}</div>
+  </button>
+`).join("");
 
   if (ideasSk) ideasSk.classList.add("hidden");
   ideasPrev.classList.remove("hidden");
+
+  // 🔗 Clicking an idea jumps to the right tab/planner
+  ideasPrev.querySelectorAll("[data-idea-sheet]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const sheet = btn.getAttribute("data-idea-sheet");
+      const idx   = Number(btn.getAttribute("data-idea-index") || "-1");
+
+      if (!sheet || Number.isNaN(idx) || idx < 0) {
+        setActiveTab("ideas");
+        return;
+      }
+
+      // ----- Ideas sheet: open Ideas tab and focus that card -----
+      if (sheet === "Ideas") {
+        setActiveTab("ideas");
+        const rows   = plannerCache.Ideas || [];
+        const row    = rows[idx] || null;
+        const search = document.getElementById("ideaSearch");
+
+        if (row && search) {
+          search.value = row.Idea || "";
+          renderIdeas();
+          document.getElementById("ideasGrid")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+        return;
+      }
+
+      // ----- Map sheet → tab + search + board toggle -----
+      let tabName = "planner";
+      if (sheet === "MattsRequests") tabName = "requests";
+      else if (sheet === "Training") tabName = "training";
+      else if (sheet === "Drone")   tabName = "drone";
+
+      setActiveTab(tabName);
+
+      // Board view toggles where we have them
+      if (sheet === "Podcast") {
+        document.getElementById("podViewBoard")?.click();
+      } else if (sheet === "YouTube") {
+        document.getElementById("ytViewBoard")?.click();
+      } else if (sheet === "LinkedIn") {
+        document.getElementById("liViewBoard")?.click();
+      } else if (sheet === "Training") {
+        document.getElementById("trainingViewBoard")?.click();
+      } else if (sheet === "MattsRequests") {
+        document.getElementById("reqViewBoard")?.click();
+      }
+
+      // Figure out which search box + title field to use
+      let searchSelector = null;
+      let titleField = "Title";
+
+      if (sheet === "Podcast") {
+        searchSelector = '[data-search="Podcast"]';
+        titleField = "Title";
+      } else if (sheet === "YouTube") {
+        searchSelector = '[data-search="YouTube"]';
+        titleField = "Title";
+      } else if (sheet === "LinkedIn") {
+        searchSelector = '[data-search="LinkedIn"]';
+        titleField = "Title";
+      } else if (sheet === "MattsRequests") {
+        searchSelector = '[data-search="MattsRequests"]';
+        titleField = "Request";
+      } else if (sheet === "Training") {
+        searchSelector = '[data-search="Training"]';
+        titleField = "LessonTitle";
+      } else if (sheet === "Drone") {
+        searchSelector = '[data-search="Drone"]';
+        titleField = "Title";
+      }
+
+      const rows       = plannerCache[sheet] || [];
+      const row        = rows[idx] || null;
+      const searchInput = searchSelector ? document.querySelector(searchSelector) : null;
+
+      if (row && searchInput) {
+        const val = row[titleField] || "";
+        searchInput.value = val;
+      }
+
+      // Re-render planners now the search is set
+      if (sheet === "Podcast") {
+        renderGrid("Podcast");
+        renderPodcastBoard();
+      } else if (sheet === "YouTube") {
+        renderGrid("YouTube");
+        renderYouTubeBoard();
+      } else if (sheet === "LinkedIn") {
+        renderGrid("LinkedIn");
+        renderLinkedInBoard();
+      } else if (sheet === "MattsRequests") {
+        renderGrid("MattsRequests");
+        renderRequestsBoard();
+      } else if (sheet === "Training") {
+        renderGrid("Training");
+        renderTrainingBoard();
+      } else if (sheet === "Drone") {
+        renderDronePlanner();
+      }
+    });
+  });
 }
 
 /* ====== DATE HELPERS ====== */
@@ -1505,6 +1680,14 @@ function updateStats(){
     st.classList.remove("hidden");
   }
 renderIdeasPreview();
+}
+function refreshAllDashBits(){
+  updateStats();
+  renderCalendar();
+  renderMiniCalendar();
+  renderUpcomingShort();
+  renderMattPreview();
+  renderTodayFocus();
 }
 function bumpLastUpdated(){
   const el = document.getElementById("lastUpdated");
@@ -3419,13 +3602,8 @@ function enableBoardDragAndDrop(wrap, sheet) {
         renderTrainingBoard();
       }
 
-      renderGrid(sheet);
-      updateStats();
-      renderCalendar();
-      renderMiniCalendar();
-      renderUpcomingShort();
-      renderMattPreview();
-      renderTodayFocus();
+            renderGrid(sheet);
+      refreshAllDashBits();
     });
   });
 }
@@ -3572,16 +3750,10 @@ function renderIdeas() {
         plannerCache.Ideas[i].LastEditedBy = CFG.currentUser;
       }
 
-      // 🔥 keep dashboard "Latest Ideas" in sync while typing
+            // 🔥 keep dashboard "Latest Ideas" in sync while typing
       renderIdeasPreview();
-
       queueAutoSave("Ideas");
-      updateStats();
-      renderCalendar();
-      renderMiniCalendar();
-      renderUpcomingShort();
-      renderMattPreview();
-      renderTodayFocus();
+      refreshAllDashBits();
     });
   });
 
@@ -3596,15 +3768,10 @@ grid.querySelectorAll("[data-del]").forEach(btn => {
     if (isNaN(i) || !plannerCache.Ideas[i]) return;
 
     plannerCache.Ideas.splice(i, 1);
-    renderIdeas();
-renderIdeasPreview();
-    queueAutoSave("Ideas");
-    updateStats();
-    renderCalendar();
-    renderMiniCalendar();
-    renderUpcomingShort();
-    renderMattPreview();
-    renderTodayFocus();
+          renderIdeas();
+      renderIdeasPreview();
+      queueAutoSave("Ideas");
+      refreshAllDashBits();
   });
 });
 }
@@ -5077,34 +5244,41 @@ document.getElementById("modal-analytics")?.addEventListener("click", (e)=>{
 });
 
 /* ====== Planner buttons ====== */
-document.querySelectorAll("[data-add]").forEach(b=>b.addEventListener("click", ()=>{
-  const sheet=b.getAttribute("data-add");
+document.querySelectorAll("[data-add]").forEach(b => b.addEventListener("click", () => {
+  const sheet = b.getAttribute("data-add");
   if (!ensureSheetReady(sheet)) return;
+
   plannerCache[sheet].push(defaultRowFor(sheet));
-if (sheet === "Drone") {
-  renderDronePlanner();
-} else {
-  renderGrid(sheet);
-}
+
+  if (sheet === "Drone") {
+    renderDronePlanner();
+  } else {
+    renderGrid(sheet);
+  }
+
   queueAutoSave(sheet);
-  updateStats();
-  renderCalendar();
-  renderMiniCalendar();
-  renderUpcomingShort();
-  renderMattPreview();
-  renderTodayFocus();
+  refreshAllDashBits();
 }));
-document.querySelectorAll("[data-save]").forEach(b=>b.addEventListener("click", async ()=>{
-  const sheet=b.getAttribute("data-save");
+
+document.querySelectorAll("[data-save]").forEach(b => b.addEventListener("click", async () => {
+  const sheet = b.getAttribute("data-save");
   if (!ensureSheetReady(sheet)) return;
-  try{ await writeSheet(sheet, plannerCache[sheet]); showNotice(`${sheet}: saved to Google Sheets`); bumpLastUpdated(); setTimeout(hideNotice,1500);
-       updateStats(); renderCalendar(); renderMiniCalendar(); renderUpcomingShort(); renderMattPreview(); renderTodayFocus();
-  } catch(e){ showNotice(`${sheet}: save failed — ${e.message||e}`) }
+  try {
+    await writeSheet(sheet, plannerCache[sheet]);
+    showNotice(`${sheet}: saved to Google Sheets`);
+    bumpLastUpdated();
+    setTimeout(hideNotice, 1500);
+    refreshAllDashBits();
+  } catch (e) {
+    showNotice(`${sheet}: save failed — ${e.message || e}`);
+  }
 }));
-document.querySelectorAll("[data-reload]").forEach(b=>b.addEventListener("click", async ()=>{
-  const sheet=b.getAttribute("data-reload");
+
+document.querySelectorAll("[data-reload]").forEach(b => b.addEventListener("click", async () => {
+  const sheet = b.getAttribute("data-reload");
   await loadSheetLoop(sheet);
-  updateStats(); renderCalendar(); renderMiniCalendar(); renderUpcomingShort(); renderMattPreview(); renderTodayFocus(); bumpLastUpdated();
+  refreshAllDashBits();
+  bumpLastUpdated();
 }));
 
 document.getElementById("ideaAdd")?.addEventListener("click", () => {
@@ -5117,14 +5291,9 @@ document.getElementById("ideaAdd")?.addEventListener("click", () => {
     Notes: ""
   });
   renderIdeas();
-renderIdeasPreview();
+  renderIdeasPreview();
   queueAutoSave("Ideas");
-  updateStats();
-  renderCalendar();
-  renderMiniCalendar();
-  renderUpcomingShort();
-  renderMattPreview();
-  renderTodayFocus();
+  refreshAllDashBits();
 });
 
 document.getElementById("ideaSave")?.addEventListener("click", async () => {
@@ -5134,12 +5303,7 @@ document.getElementById("ideaSave")?.addEventListener("click", async () => {
     showNotice("Ideas saved.");
     bumpLastUpdated();
     setTimeout(hideNotice, 1200);
-    updateStats();
-    renderCalendar();
-    renderMiniCalendar();
-    renderUpcomingShort();
-    renderMattPreview();
-    renderTodayFocus();
+    refreshAllDashBits();
   } catch (e) {
     showNotice("Ideas save failed — " + (e.message || e));
   }
@@ -5147,12 +5311,7 @@ document.getElementById("ideaSave")?.addEventListener("click", async () => {
 
 document.getElementById("ideaReload")?.addEventListener("click", async () => {
   await loadSheetLoop("Ideas");
-  updateStats();
-  renderCalendar();
-  renderMiniCalendar();
-  renderUpcomingShort();
-  renderMattPreview();
-  renderTodayFocus();
+  refreshAllDashBits();
   bumpLastUpdated();
 });
 
@@ -5194,154 +5353,95 @@ if (droneSearchInput) {
 })();
 
 /* ====== Matt's Requests: view toggle ====== */
-(function setupRequestsView(){
-  const btnTable = document.getElementById("reqViewTable");
-  const btnBoard = document.getElementById("reqViewBoard");
-  const elTable  = document.getElementById("requestsTable");
-  const elBoard  = document.getElementById("requestsBoard");
-
-  if (!btnTable || !btnBoard || !elTable || !elBoard) return;
-
-  function setView(v){
-    localStorage.setItem(REQ_VIEW_KEY, JSON.stringify(v));
-    const isBoard = v === "board";
-    elBoard.classList.toggle("hidden", !isBoard);
-    elTable.classList.toggle("hidden", isBoard);
-    btnBoard.classList.toggle("active", isBoard);
-    btnTable.classList.toggle("active", !isBoard);
-    if (isBoard) renderRequestsBoard();
-    else renderGrid("MattsRequests");
-  }
-
-  btnTable.addEventListener("click", ()=> setView("table"));
-  btnBoard.addEventListener("click", ()=> setView("board"));
-
-  const saved = (()=>{
-    try{ return JSON.parse(localStorage.getItem(REQ_VIEW_KEY)) || "board"; }catch{ return "board" }
-  })();
-  setView(saved);
-})();
-
-/* ====== Training: view toggle ====== */
-(function setupTrainingView() {
-  const btnTable = document.getElementById("trainingViewTable");
-  const btnBoard = document.getElementById("trainingViewBoard");
-  const elTable  = document.getElementById("trainingTable");
-  const elBoard  = document.getElementById("trainingBoard");
+function setupViewToggle({ btnTableId, btnBoardId, tableId, boardId, storageKey, sheetName, boardRenderer }) {
+  const btnTable = document.getElementById(btnTableId);
+  const btnBoard = document.getElementById(btnBoardId);
+  const elTable  = document.getElementById(tableId);
+  const elBoard  = document.getElementById(boardId);
 
   if (!btnTable || !btnBoard || !elTable || !elBoard) return;
 
   function setView(v) {
-    localStorage.setItem(TRAIN_VIEW_KEY, JSON.stringify(v));
+    try { localStorage.setItem(storageKey, JSON.stringify(v)); } catch {}
+
     const isBoard = v === "board";
     elBoard.classList.toggle("hidden", !isBoard);
     elTable.classList.toggle("hidden", isBoard);
     btnBoard.classList.toggle("active", isBoard);
     btnTable.classList.toggle("active", !isBoard);
-    if (isBoard) renderTrainingBoard();
-    else renderGrid("Training");
+
+    if (isBoard && typeof boardRenderer === "function") {
+      boardRenderer();
+    } else if (sheetName) {
+      renderGrid(sheetName);
+    }
   }
 
   btnTable.addEventListener("click", () => setView("table"));
   btnBoard.addEventListener("click", () => setView("board"));
 
-  const saved = (() => {
-    try { return JSON.parse(localStorage.getItem(TRAIN_VIEW_KEY)) || "board"; }
-    catch { return "board"; }
-  })();
+  let saved = "board";
+  try {
+    const raw = localStorage.getItem(storageKey);
+    saved = raw ? JSON.parse(raw) : "board";
+  } catch {}
 
   setView(saved);
-})();
+}
+/* ====== Matt's Requests: view toggle ====== */
+setupViewToggle({
+  btnTableId: "reqViewTable",
+  btnBoardId: "reqViewBoard",
+  tableId: "requestsTable",
+  boardId: "requestsBoard",
+  storageKey: REQ_VIEW_KEY,
+  sheetName: "MattsRequests",
+  boardRenderer: renderRequestsBoard,
+});
 
 /* ====== Podcast: view toggle ====== */
-(function setupPodcastView(){
-  const btnTable = document.getElementById("podViewTable");
-  const btnBoard = document.getElementById("podViewBoard");
-  const elTable  = document.getElementById("podcastTable");
-  const elBoard  = document.getElementById("podcastBoard");
-
-  if (!btnTable || !btnBoard || !elTable || !elBoard) return;
-
-  function setView(v){
-    localStorage.setItem(POD_VIEW_KEY, JSON.stringify(v));
-    const isBoard = v === "board";
-    elBoard.classList.toggle("hidden", !isBoard);
-    elTable.classList.toggle("hidden", isBoard);
-    btnBoard.classList.toggle("active", isBoard);
-    btnTable.classList.toggle("active", !isBoard);
-    if (isBoard) renderPodcastBoard();
-    else renderGrid("Podcast");
-  }
-
-  btnTable.addEventListener("click", ()=> setView("table"));
-  btnBoard.addEventListener("click", ()=> setView("board"));
-
-  const saved = (()=> {
-    try { return JSON.parse(localStorage.getItem(POD_VIEW_KEY)) || "board"; }
-    catch { return "board"; }
-  })();
-  setView(saved);
-})();
+setupViewToggle({
+  btnTableId: "podViewTable",
+  btnBoardId: "podViewBoard",
+  tableId: "podcastTable",
+  boardId: "podcastBoard",
+  storageKey: POD_VIEW_KEY,
+  sheetName: "Podcast",
+  boardRenderer: renderPodcastBoard,
+});
 
 /* ====== YouTube: view toggle ====== */
-(function setupYouTubeView(){
-  const btnTable = document.getElementById("ytViewTable");
-  const btnBoard = document.getElementById("ytViewBoard");
-  const elTable  = document.getElementById("youtubeTable");
-  const elBoard  = document.getElementById("youtubeBoard");
-
-  if (!btnTable || !btnBoard || !elTable || !elBoard) return;
-
-  function setView(v){
-    localStorage.setItem(YT_VIEW_KEY, JSON.stringify(v));
-    const isBoard = v === "board";
-    elBoard.classList.toggle("hidden", !isBoard);
-    elTable.classList.toggle("hidden", isBoard);
-    btnBoard.classList.toggle("active", isBoard);
-    btnTable.classList.toggle("active", !isBoard);
-    if (isBoard) renderYouTubeBoard();
-    else renderGrid("YouTube");
-  }
-
-  btnTable.addEventListener("click", ()=> setView("table"));
-  btnBoard.addEventListener("click", ()=> setView("board"));
-
-  const saved = (()=> {
-    try { return JSON.parse(localStorage.getItem(YT_VIEW_KEY)) || "board"; }
-    catch { return "board"; }
-  })();
-  setView(saved);
-})();
+setupViewToggle({
+  btnTableId: "ytViewTable",
+  btnBoardId: "ytViewBoard",
+  tableId: "youtubeTable",
+  boardId: "youtubeBoard",
+  storageKey: YT_VIEW_KEY,
+  sheetName: "YouTube",
+  boardRenderer: renderYouTubeBoard,
+});
 
 /* ====== LinkedIn: view toggle ====== */
-(function setupLinkedInView(){
-  const btnTable = document.getElementById("liViewTable");
-  const btnBoard = document.getElementById("liViewBoard");
-  const elTable  = document.getElementById("linkedinTable");
-  const elBoard  = document.getElementById("linkedinBoard");
+setupViewToggle({
+  btnTableId: "liViewTable",
+  btnBoardId: "liViewBoard",
+  tableId: "linkedinTable",
+  boardId: "linkedinBoard",
+  storageKey: LI_VIEW_KEY,
+  sheetName: "LinkedIn",
+  boardRenderer: renderLinkedInBoard,
+});
 
-  if (!btnTable || !btnBoard || !elTable || !elBoard) return;
-
-  function setView(v){
-    localStorage.setItem(LI_VIEW_KEY, JSON.stringify(v));
-    const isBoard = v === "board";
-    elBoard.classList.toggle("hidden", !isBoard);
-    elTable.classList.toggle("hidden", isBoard);
-    btnBoard.classList.toggle("active", isBoard);
-    btnTable.classList.toggle("active", !isBoard);
-    if (isBoard) renderLinkedInBoard();
-    else renderGrid("LinkedIn");
-  }
-
-  btnTable.addEventListener("click", ()=> setView("table"));
-  btnBoard.addEventListener("click", ()=> setView("board"));
-
-  const saved = (()=> {
-    try { return JSON.parse(localStorage.getItem(LI_VIEW_KEY)) || "board"; }
-    catch { return "board"; }
-  })();
-  setView(saved);
-})();
+/* ====== Training: view toggle ====== */
+setupViewToggle({
+  btnTableId: "trainingViewTable",
+  btnBoardId: "trainingViewBoard",
+  tableId: "trainingTable",
+  boardId: "trainingBoard",
+  storageKey: TRAIN_VIEW_KEY,
+  sheetName: "Training",
+  boardRenderer: renderTrainingBoard,
+});
 
 /* Re-render boards when typing in search or switching quick filters */
 (function wireBoardsLiveSync(){
