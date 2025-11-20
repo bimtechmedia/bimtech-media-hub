@@ -1181,19 +1181,152 @@ function renderIdeasPreview(){
   const ideasSk   = document.getElementById("ideasPreviewSkeleton");
   if (!ideasPrev) return;
 
-  const rows = Array.isArray(plannerCache.Ideas) ? plannerCache.Ideas : [];
+  const rows = [];
 
-  ideasPrev.innerHTML = rows.slice(0,5).map(r=>`
-    <div class="border border-[#1E2A33] rounded-md p-2">
-      <div class="font-semibold">${htmlesc(r.Idea || "(Untitled)")}</div>
-      <div class="text-xs text-dim">
-        ${htmlesc(r.Category || "")}${
-          r.Created ? ` · ${fmtDate(toInputDate(r.Created))}` : ""
-        }
+  // Helper: push a normalised "idea" item
+  function pushIdea({ title, meta, date, notes }) {
+    if (!title && !notes) return;
+    rows.push({ title, meta, date, notes });
+  }
+
+  // 1) Native Ideas tab (always included)
+  (plannerCache.Ideas || []).forEach(r => {
+    pushIdea({
+      title: r.Idea || "(Untitled idea)",
+      meta: r.Category ? `Ideas • ${r.Category}` : "Ideas",
+      date: r.Created || "",
+      notes: r.Notes || ""
+    });
+  });
+
+  // Helper to detect explicit "Idea" status
+  function isIdeaStatus(status) {
+    return /idea/i.test(String(status || ""));
+  }
+
+  // 2) Podcast — anything that lives in the Idea column OR has Status containing "Idea"
+  (plannerCache.Podcast || []).forEach(r => {
+    const status = r.Status;
+    let bucket = "";
+    try {
+      bucket = podcastBucketForStatus(status);
+    } catch (_) {}
+
+    const inIdeaPhase = isIdeaStatus(status) || bucket === "Idea";
+    if (!inIdeaPhase) return;
+
+    pushIdea({
+      title: r.Title || "(Untitled episode)",
+      meta: r.Guest ? `Podcast • ${r.Guest}` : "Podcast",
+      date: r.Planned || "",
+      notes: r.Notes || ""
+    });
+  });
+
+  // 3) YouTube — Idea bucket or explicit "Idea" status
+  (plannerCache.YouTube || []).forEach(r => {
+    const status = r.Status;
+    let bucket = "";
+    try {
+      bucket = youtubeBucketForStatus(status);
+    } catch (_) {}
+
+    const inIdeaPhase = isIdeaStatus(status) || bucket === "Idea";
+    if (!inIdeaPhase) return;
+
+    pushIdea({
+      title: r.Title || "(Untitled video)",
+      meta: "YouTube",
+      date: r.Planned || "",
+      notes: r.Notes || ""
+    });
+  });
+
+  // 4) LinkedIn — Idea bucket or explicit "Idea" status
+  (plannerCache.LinkedIn || []).forEach(r => {
+    const status = r.Status;
+    let bucket = "";
+    try {
+      bucket = linkedinBucketForStatus(status);
+    } catch (_) {}
+
+    const inIdeaPhase = isIdeaStatus(status) || bucket === "Idea";
+    if (!inIdeaPhase) return;
+
+    pushIdea({
+      title: r.Title || "(Untitled post)",
+      meta: r.Type ? `LinkedIn • ${r.Type}` : "LinkedIn",
+      date: r.Planned || "",
+      notes: r.Notes || ""
+    });
+  });
+
+  // 5) Matt’s Requests — treat "Idea" status as ideation
+  (plannerCache.MattsRequests || []).forEach(r => {
+    if (!isIdeaStatus(r.Status)) return;
+    pushIdea({
+      title: r.Request || "(Request idea)",
+      meta: r.Owner ? `Matt’s Request • ${r.Owner}` : "Matt’s Request",
+      date: r.DueDate || "",
+      notes: r.Notes || ""
+    });
+  });
+
+  // 6) Training — rows in idea phase
+  (plannerCache.Training || []).forEach(r => {
+    if (!isIdeaStatus(r.Status)) return;
+    const lessonTitle =
+      r.LessonTitle || r.VideoTitle || r.ModuleName || "(Training idea)";
+    const metaBits = [];
+    if (r.TrainingType) metaBits.push(r.TrainingType);
+    if (r.ModuleName)   metaBits.push(r.ModuleName);
+    pushIdea({
+      title: lessonTitle,
+      meta: metaBits.length ? `Training • ${metaBits.join(" • ")}` : "Training",
+      date: r.Planned || r.DueDate || "",
+      notes: r.Notes || ""
+    });
+  });
+
+  // 7) Drone — if you ever mark drone work as Idea
+  (plannerCache.Drone || []).forEach(r => {
+    if (!isIdeaStatus(r.Status)) return;
+    pushIdea({
+      title: r.Title || "(Drone idea)",
+      meta: r.Site ? `Drone • ${r.Site}` : "Drone",
+      date: r.Planned || "",
+      notes: r.Notes || ""
+    });
+  });
+
+  // Sort newest-first by date (fallback to "oldest" if no date)
+  rows.sort((a,b)=>{
+    const da = a.date ? parseDateFlexible(a.date) : new Date(0);
+    const db = b.date ? parseDateFlexible(b.date) : new Date(0);
+    return db - da;
+  });
+
+  // If still nothing, show a friendly empty state
+  if (!rows.length) {
+    ideasPrev.innerHTML = `
+      <div class="text-sm text-dim">
+        No idea-phase items yet.  
+        Mark something as <b>Idea</b> in any planner, or add a card in the <b>Ideas</b> tab to see it here.
       </div>
-      <div class="text-sm mt-1 line-clamp-3">${htmlesc(r.Notes || "")}</div>
-    </div>
-  `).join("");
+    `;
+  } else {
+    ideasPrev.innerHTML = rows.slice(0,5).map(r=>`
+      <div class="border border-[#1E2A33] rounded-md p-2">
+        <div class="font-semibold">${htmlesc(r.title || "(Untitled idea)")}</div>
+        <div class="text-xs text-dim">
+          ${htmlesc(r.meta || "")}${
+            r.date ? ` · ${fmtDate(r.date)}` : ""
+          }
+        </div>
+        <div class="text-sm mt-1 line-clamp-3">${htmlesc(r.notes || "")}</div>
+      </div>
+    `).join("");
+  }
 
   if (ideasSk) ideasSk.classList.add("hidden");
   ideasPrev.classList.remove("hidden");
@@ -1371,6 +1504,7 @@ function updateStats(){
     sk.classList.add("hidden");
     st.classList.remove("hidden");
   }
+renderIdeasPreview();
 }
 function bumpLastUpdated(){
   const el = document.getElementById("lastUpdated");
@@ -2532,7 +2666,6 @@ function renderPodcastBoard() {
       const status = r.Status || "";
 const badge  = dueBadgeState(r.Planned, status);
 const plannedLabel = r.Planned ? fmtDate(r.Planned) : "No date";
-const lessonTitle   = r.LessonTitle || "(Untitled lesson)";
       const moduleName    = r.ModuleName  || "";
       const trainingType  = r.TrainingType || "";
 
@@ -2541,13 +2674,12 @@ card.className = "req-card";
 card.dataset.i = ridx;
 
       card.innerHTML = `
-        <div class="req-title">${htmlesc(lessonTitle)}</div>
-        <div class="req-meta">
-          <span class="req-badge ${badge.cls}">${badge.label}</span>
-          ${r.Planned ? `<span>🗓 ${htmlesc(plannedLabel)}</span>` : ""}
-          ${moduleName ? `<span>📦 ${htmlesc(moduleName)}</span>` : ""}
-          ${trainingType ? `<span>🎓 ${htmlesc(trainingType)}</span>` : ""}
-        </div>
+  <div class="req-title">${htmlesc(title)}</div>
+  <div class="req-meta">
+    <span class="req-badge ${badge.cls}">${badge.label}</span>
+    ${r.Planned ? `<span>🗓 ${htmlesc(plannedLabel)}</span>` : ""}
+    ${guest ? `<span>🎙 ${htmlesc(guest)}</span>` : ""}
+  </div>
 
         <div class="req-meta">
           ${r.Owner ? `<span>🙋 ${htmlesc(r.Owner)}</span>` : ""}
