@@ -4556,16 +4556,34 @@ function collectCalendarEvents(){
   // 👇 still using "linkedin" as the kind so colours/legend keep working
   push(events, r.Planned, label, "linkedin", "LinkedIn", i, r.Link || null);
 });
-  (plannerCache.Training||[]).forEach((r,i)=>
+    (plannerCache.Training || []).forEach((r, i) => {
+    const moduleName   = r.ModuleName  || "";
+    const lessonTitle  = r.LessonTitle || "";
+    const trainingType = r.TrainingType || "";
+
+    // Build a sensible title (same logic as Training board)
+    let title;
+    if (moduleName && lessonTitle) {
+      title = `${moduleName}: ${lessonTitle}`;
+    } else if (lessonTitle) {
+      title = lessonTitle;
+    } else if (moduleName) {
+      title = moduleName;
+    } else {
+      title = trainingType || "(Training)";
+    }
+
+    const suffix = r.Progress ? ` [${r.Progress}]` : "";
+
     push(
       events,
       r.Planned || r.DueDate || "",
-      (r.Module?`${r.Module}: `:"")+(r.VideoTitle||"(Training)")+(r.Progress?` [${r.Progress}]`:""),
+      title + suffix,
       "training",
       "Training",
       i
-    )
-  );
+    );
+  });
   (plannerCache.MattsRequests||[]).forEach((r,i)=>
     push(
       events,
