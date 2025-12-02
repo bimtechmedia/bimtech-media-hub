@@ -17,7 +17,7 @@
 
   Data source:
     - Google Apps Script endpoint (multi-sheet):
-      https://script.google.com/macros/s/AKfycbxRldtbPS0k7P-1ROaure6SbTB5Il23SmoYRCvffJWZo1hhSELe30e_9lzhpEU3hvmxGQ/exec
+      https://script.google.com/macros/s/AKfycbztAe2JZpy0KORfW-fOuSIqc3oAOdl47e04LnWQQ_xc-E7DLsk_EFDfAYOVmgNYU2Q4KQ/exec
 
   Sheets expected in the connected Google Sheet:
     - "Podcast"       (Title, Guest, Status, Planned, Notes, LastEditedBy)
@@ -185,7 +185,7 @@ tailwind.config = {
 }
 
 .calCell.drop-target {
-  outline: 2px dashed #22c55e;
+  outline: 2px dashed #1193b8;
   outline-offset: -3px;
 }
   .calItem.podcast  { background: rgba(17,147,184,.18);  border-color:#1193b8; color:#c9f1fb; }
@@ -443,7 +443,7 @@ tailwind.config = {
 }
 
 .board-col.drop-target {
-  outline: 2px dashed #22c55e;
+  outline: 2px dashed #1193b8;
   outline-offset: -3px;
   background: rgba(34,197,94,0.06);
 }
@@ -477,7 +477,7 @@ tailwind.config = {
            src="https://drive.google.com/thumbnail?id=1hsk_k-cn8iA4RkN7KuCZIkX9lKS_Q5oz"/>
       <div>
         <div class="text-lg font-semibold">BIMTech Media Hub</div>
-        <div class="text-xs text-dim">Podcast • YouTube • LinkedIn • Drone • Training • Ideas</div>
+        <div class="text-xs text-dim">Podcast • YouTube • Social • Drone • Training • Ideas</div>
       </div>
     </div>
     <!-- Hero chips -->
@@ -671,10 +671,6 @@ tailwind.config = {
     <div class="card p-4 dashCard dashCardShort">
       <div class="dashHead flex items-center justify-between gap-2">
         <h3 class="font-semibold text-lg">Latest Ideas</h3>
-        <button id="goToIdeasFromDash"
-                class="btn btn-outline btn-xs text-[11px] px-2 py-1">
-          View Ideas Board
-        </button>
       </div>
       <div class="dashBody mt-2">
         <div id="ideasPreviewSkeleton" class="space-y-2">
@@ -800,7 +796,7 @@ tailwind.config = {
   <!-- LinkedIn -->
 <div class="card p-4">
   <div class="flex items-center justify-between mb-2">
-    <h2 class="font-semibold text-lg">LinkedIn Planner</h2>
+    <h2 class="font-semibold text-lg">Social Planner</h2>
     <div class="flex gap-2 items-center">
       <div class="view-toggle hidden md:flex gap-1">
         <button id="liViewTable" class="btn btn-outline text-xs">Table</button>
@@ -815,7 +811,7 @@ tailwind.config = {
   <div class="mb-3 flex gap-2">
     <input class="w-64 px-3 py-2" placeholder="Search…" data-search="LinkedIn">
     <span class="text-dim text-xs">
-      Columns: Title | Type | Status | Planned | Link | Notes | LastEditedBy
+      Columns: Title | Platform | Type | Status | Planned | Link | Notes | LastEditedBy
     </span>
   </div>
 
@@ -977,7 +973,7 @@ tailwind.config = {
     <section id="tab-calendar">
       <div class="flex items-center justify-between mb-3">
         <div class="text-xs text-dim">
-          Shows planned dates from Podcast, YouTube, LinkedIn, Training, Drone and due dates from Matt’s Requests.
+          Shows planned dates from Podcast, YouTube, Socials, Training, Drone and due dates from Matt’s Requests.
         </div>
         <div class="flex items-center gap-2">
           <button id="calPrev" class="btn btn-outline">← Prev</button>
@@ -995,7 +991,7 @@ tailwind.config = {
           <span class="w-2 h-2 rounded-full" style="background:#f472b6"></span> YouTube
         </span>
         <span class="inline-flex items-center gap-2 px-2 py-1 rounded border" style="background:rgba(59,130,246,.16); border-color:#3b82f6; color:#dbeafe">
-          <span class="w-2 h-2 rounded-full" style="background:#3b82f6"></span> LinkedIn
+          <span class="w-2 h-2 rounded-full" style="background:#3b82f6"></span> Socials
         </span>
         <span class="inline-flex items-center gap-2 px-2 py-1 rounded border" style="background:rgba(34,197,94,.16); border-color:#22c55e; color:#dcfce7">
           <span class="w-2 h-2 rounded-full" style="background:#22c55e"></span> Training
@@ -1107,7 +1103,7 @@ const ls = {
 };
 
 const CFG = {
-  scriptUrl: ls.get("cfg_scriptUrl", "https://script.google.com/macros/s/AKfycbxRldtbPS0k7P-1ROaure6SbTB5Il23SmoYRCvffJWZo1hhSELe30e_9lzhpEU3hvmxGQ/exec"),
+  scriptUrl: ls.get("cfg_scriptUrl", "https://script.google.com/macros/s/AKfycbztAe2JZpy0KORfW-fOuSIqc3oAOdl47e04LnWQQ_xc-E7DLsk_EFDfAYOVmgNYU2Q4KQ/exec"),
   podcastRss: ls.get("cfg_podcastRss", "https://feeds.buzzsprout.com/2302419.rss"),
   ytChannel:  ls.get("cfg_ytChannel", "UC3YMGy7zvExkiI-VGKH_UFg"),
   logoUrl:    ls.get("cfg_logo", "https://drive.google.com/thumbnail?id=1hsk_k-cn8iA4RkN7KuCZIkX9lKS_Q5oz"),
@@ -1298,26 +1294,35 @@ function renderIdeasPreview() {
   });
 });
 
-  // 4) LinkedIn — Idea bucket or explicit "Idea" status
-  (plannerCache.LinkedIn || []).forEach((r, i) => {
-    const status = r.Status;
-    let bucket = "";
-    try {
-      bucket = linkedinBucketForStatus(status);
-    } catch (_) {}
+// 4) LinkedIn / Social — Idea bucket or explicit "Idea" status
+(plannerCache.LinkedIn || []).forEach((r, i) => {
+  const status = r.Status;
+  let bucket = "";
+  try {
+    bucket = linkedinBucketForStatus(status);
+  } catch (_) {}
 
-    const inIdeaPhase = isIdeaStatus(status) || bucket === "Idea";
-    if (!inIdeaPhase) return;
+  const inIdeaPhase = isIdeaStatus(status) || bucket === "Idea";
+  if (!inIdeaPhase) return;
 
-    pushIdea({
-      sheet: "LinkedIn",
-      index: i,
-      title: r.Title || "(Untitled post)",
-      meta: r.Type ? `LinkedIn • ${r.Type}` : "LinkedIn",
-      date: r.Planned || "",
-      notes: r.Notes || ""
-    });
+  const platform = r.Platform || "LinkedIn";
+  let metaLabel = platform;
+
+  if (r.Type && platform) {
+    metaLabel = `${platform} • ${r.Type}`;
+  } else if (r.Type) {
+    metaLabel = `LinkedIn • ${r.Type}`;
+  }
+
+  pushIdea({
+    sheet: "LinkedIn",
+    index: i,
+    title: r.Title || "(Untitled post)",
+    meta: metaLabel,
+    date: r.Planned || "",
+    notes: r.Notes || ""
   });
+});
 
   // 5) Matt’s Requests — treat "Idea" status as ideation
   (plannerCache.MattsRequests || []).forEach((r, i) => {
@@ -1658,19 +1663,60 @@ function extractYouTubeId(input){
 /* ====== Stats & last updated ====== */
 function updateStats(){
   const plannerSheets = ["Podcast","YouTube","LinkedIn","MattsRequests","Training","Drone"];
-  const plannersCount = plannerSheets.reduce((a,k)=> a + ((plannerCache[k]||[]).length), 0);
-  const ideasCount = (plannerCache.Ideas||[]).length;
-  const epCount = (rssPodcast||[]).length;
-  const ytCount = (rssYouTube||[]).length;
-  const set = (id,v)=>{ const el=document.getElementById(id); if(el) el.textContent=String(v) };
+  const plannersCount = plannerSheets.reduce(
+    (a, k) => a + ((plannerCache[k] || []).length),
+    0
+  );
+
+  const epCount = (rssPodcast || []).length;
+  const ytCount = (rssYouTube || []).length;
+
+  // Helper: treat anything with "idea" in the status as an idea
+  const isIdeaStatus = (status) => /idea/i.test(String(status || ""));
+
+  // Helper: count idea-phase rows in a sheet that uses bucket functions
+  const addIdeaRows = (rows, bucketFn) => {
+    if (!rows) return 0;
+    let c = 0;
+    rows.forEach(r => {
+      const status = r.Status;
+      let bucket = "";
+      if (bucketFn) {
+        try { bucket = bucketFn(status); } catch(_) {}
+      }
+      const inIdeaPhase = isIdeaStatus(status) || bucket === "Idea";
+      if (inIdeaPhase) c++;
+    });
+    return c;
+  };
+
+  // Start with the explicit Ideas sheet
+  let ideasCount = (plannerCache.Ideas || []).length;
+
+  // Add idea-phase items from the other planners
+  ideasCount += addIdeaRows(plannerCache.Podcast,   podcastBucketForStatus);
+  ideasCount += addIdeaRows(plannerCache.YouTube,   youtubeBucketForStatus);
+  ideasCount += addIdeaRows(plannerCache.LinkedIn,  linkedinBucketForStatus);
+
+  // Matt’s Requests, Training, Drone: "idea" status only
+  ideasCount += (plannerCache.MattsRequests || []).filter(r => isIdeaStatus(r.Status)).length;
+  ideasCount += (plannerCache.Training      || []).filter(r => isIdeaStatus(r.Status)).length;
+  ideasCount += (plannerCache.Drone         || []).filter(r => isIdeaStatus(r.Status)).length;
+
+  const set = (id, v) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = String(v);
+  };
+
   set("statPlanners", plannersCount);
-  set("statIdeas", ideasCount);
+  set("statIdeas",    ideasCount);
   set("statEpisodes", epCount);
-  set("statYT", ytCount);
+  set("statYT",       ytCount);
+
   set("chipEpisodes", epCount);
-  set("chipYT", ytCount);
+  set("chipYT",       ytCount);
   set("chipPlanners", plannersCount);
-  set("chipIdeas", ideasCount);
+  set("chipIdeas",    ideasCount);
 
   // Reveal summary stats once we have numbers
   const sk = document.getElementById("summarySkeleton");
@@ -1679,7 +1725,9 @@ function updateStats(){
     sk.classList.add("hidden");
     st.classList.remove("hidden");
   }
-renderIdeasPreview();
+
+  // Keep the dashboard ideas preview in sync
+  renderIdeasPreview();
 }
 function refreshAllDashBits(){
   updateStats();
@@ -1929,7 +1977,7 @@ function renderYouTubeCard(){
 const SCHEMA = {
   Podcast:      ["Title","Guest","Status","Planned","Notes","LastEditedBy"],
   YouTube:      ["Title","Link","Status","Planned","Thumbnail","Notes","LastEditedBy"],
-  LinkedIn:     ["Title","Type","Status","Planned","Link","Notes","LastEditedBy"],
+  LinkedIn:     ["Title","Platform","Type","Status","Planned","Link","Notes","LastEditedBy"],
   MattsRequests:["Request","Priority","Status","Owner","DueDate","Notes","LastEditedBy"],
       Training: [
     "TrainingType",
@@ -1986,6 +2034,13 @@ function defaultRowFor(sheet){
     r.Author  = CFG.currentUser;
     r.Created = new Date().toISOString().slice(0,10);
     r.Status  = "Idea";
+  }
+
+  // 🔹 NEW: default platform for LinkedIn planner
+  if (sheet === "LinkedIn") {
+    if (r["Platform"] !== undefined && !r["Platform"]) {
+      r["Platform"] = "LinkedIn";
+    }
   }
 
     if (sheet === "Drone") {
@@ -2121,7 +2176,7 @@ function trainingBucketForStatus(status) {
 const LI_VIEW_KEY = "li_view"; // "table" | "board"
 const LI_BUCKETS = [
   { key: "Idea",             match: /^idea$/i },
-  { key: "Designing/Editing",match: /mock-up|designing\/editing|editing|review/i },
+  { key: "Designing/Editing", match: /mock[- ]?up|designing[^a-z0-9]?editing|editing|review/i },
   { key: "Scheduled Upload", match: /scheduled post|scheduled upload/i },
   { key: "Uploaded",         match: /posted|uploaded|completed|done|archived/i },
 ];
@@ -2135,7 +2190,8 @@ function linkedinBucketForStatus(status) {
 
   if (/posted|uploaded|completed|done|archived/i.test(s)) return "Uploaded";
   if (/scheduled post|scheduled upload/i.test(s)) return "Scheduled Upload";
-  if (/mock-up|designing\/editing|editing|review/i.test(s)) return "Designing/Editing";
+  if (/mock[- ]?up|designing[^a-z0-9]?editing|editing|review/i.test(s)) 
+  return "Designing/Editing";
 
   return "Idea";
 }
@@ -2339,6 +2395,27 @@ if (isDrone) {
         </td>`;
       }
 
+// LinkedIn: Platform dropdown (general social planner)
+if (sheet === "LinkedIn" && h === "Platform") {
+  const platformOptions = [
+    "LinkedIn",
+    "Instagram",
+    "Facebook",
+    "Twitter / X",
+    "TikTok",
+    "Threads",
+    "Pinterest",
+    "Other",
+  ];
+  return `<td>
+    <select data-k="${h}" data-i="${ridx}">
+      ${platformOptions
+        .map(o => `<option ${String(r[h] || "") === o ? "selected" : ""}>${o}</option>`)
+        .join("")}
+    </select>
+  </td>`;
+}
+
             // Status selects (with colour)
       if (h === "Status") {
         let statusOptions;
@@ -2379,14 +2456,16 @@ if (isDrone) {
             "Archived"
           ];
 } else if (sheet === "LinkedIn") {
-        statusOptions = [
-          "Idea",
-          "Mock-Up",
-          "Designing/Editing",
-          "Review",
-          "Scheduled Post",
-          "Posted",
-          "Archived"
+  statusOptions = [
+    "Idea",
+    "Mock-Up",
+    "Designing/Editing",
+    "Review",
+    "Scheduled Post",   // timeline-style wording
+    "Scheduled Upload", // board column
+    "Posted",           // timeline-style wording
+    "Uploaded",         // board column
+    "Archived"
         ]
         } else {
           statusOptions = [
@@ -3411,11 +3490,15 @@ const plannedLabel = r.Planned ? fmtDate(r.Planned) : "No date";
 
 const meta = document.createElement("div");
 meta.className = "req-meta";
+
+const platformLabel = r.Platform || "LinkedIn";
+
 meta.innerHTML = `
   <span class="req-badge ${badge.cls}">${badge.label}</span>
-  ${r.Type   ? `<span>${r.Type}</span>` : ""}
-  ${r.Planned ? `<span>🗓 ${plannedLabel}</span>` : ""}
-  ${r.Link   ? `<a href="${r.Link}" target="_blank" rel="noopener">🔗 Link</a>` : ""}
+  ${platformLabel ? `<span>${platformLabel}</span>` : ""}
+  ${r.Type        ? `<span>${r.Type}</span>` : ""}
+  ${r.Planned     ? `<span>🗓 ${plannedLabel}</span>` : ""}
+  ${r.Link        ? `<a href="${r.Link}" target="_blank" rel="noopener">🔗 Link</a>` : ""}
 `;
 card.appendChild(meta);
 
@@ -3424,13 +3507,15 @@ card.appendChild(meta);
       actions.innerHTML = `
         <select class="statusSel ${statusClass(r.Status)}" data-i="${ridx}" data-k="Status">
           ${[
-            "Idea",
-            "Mock-Up",
-            "Designing/Editing",
-            "Review",
-            "Scheduled Post",
-            "Posted",
-            "Archived"
+ "Idea",
+      "Mock-Up",
+      "Designing/Editing",
+      "Review",
+      "Scheduled Post",   // timeline wording
+      "Scheduled Upload", // board column
+      "Posted",           // timeline wording
+      "Uploaded",         // board column
+      "Archived"
           ].map(s=>`<option ${String(r.Status||"")===s?"selected":""}>${s}</option>`).join("")}
         </select>
         <button class="btn btn-outline text-xs" data-done="${ridx}">✅ Done</button>
@@ -3936,26 +4021,29 @@ function renderDronePlanner() {
       <div class="border border-[#1E2A33] rounded-lg p-3 bg-[#0F151A] flex flex-col gap-2 row-drone-card" data-drone-card data-index="${idx}">
         <!-- Top line: title + badges + delete -->
         <div class="flex items-start justify-between gap-2">
-          <div>
-            <input
-              class="w-full mb-1"
-              placeholder="Flight title…"
-              data-k="Title"
-              value="${htmlesc(row.Title || "")}"
-            >
-            <div class="text-[11px] text-dim">
-              ${htmlesc(row.Site || "No site / location")}
-            </div>
-          </div>
-          <div class="flex flex-col items-end gap-1">
-            <span class="inline-flex items-center px-2 py-0.5 rounded-full border ${riskBadgeClass}" data-risk-badge>
-              <span class="text-[11px] font-medium">${riskBadgeText}</span>
-            </span>
-            <span class="inline-flex items-center px-2 py-0.5 rounded-full border bg-amber-500/15 border-amber-500/50 text-amber-100 text-[11px] font-medium ${showFrzBadge ? "" : "hidden"}" data-frz-badge>
-              FRZ check required
-            </span>
-          </div>
-        </div>
+  <div>
+    <input
+      class="w-full mb-1"
+      placeholder="Flight title…"
+      data-k="Title"
+      value="${htmlesc(row.Title || "")}"
+    >
+    <input
+      class="w-full text-[12px]"
+      placeholder="Site / location"
+      data-k="Site"
+      value="${htmlesc(row.Site || "")}"
+    >
+  </div>
+  <div class="flex flex-col items-end gap-1">
+    <span class="inline-flex items-center px-2 py-0.5 rounded-full border ${riskBadgeClass}" data-risk-badge>
+      <span class="text-[11px] font-medium">${riskBadgeText}</span>
+    </span>
+    <span class="inline-flex items-center px-2 py-0.5 rounded-full border border-amber-500/60 bg-amber-500/10 text-[11px] font-medium ${showFrzBadge ? "" : "hidden"}" data-frz-badge>
+      FRZ check required
+    </span>
+  </div>
+</div>
 
         <!-- Planned date + Pilot -->
         <div class="grid grid-cols-2 gap-2">
@@ -4446,9 +4534,28 @@ function collectCalendarEvents(){
   (plannerCache.YouTube||[]).forEach((r,i)=>
     push(events, r.Planned, r.Title || "(Untitled Video)", "youtube", "YouTube", i, r.Link||null)
   );
-  (plannerCache.LinkedIn||[]).forEach((r,i)=>
-    push(events, r.Planned, r.Title || "(LinkedIn Post)", "linkedin", "LinkedIn", i, r.Link||null)
-  );
+  (plannerCache.LinkedIn || []).forEach((r, i) => {
+  const platform = (r.Platform || "LinkedIn").trim();
+
+  // Short labels for the calendar chip
+  const platformShortMap = {
+    "LinkedIn": "LI",
+    "Instagram": "IG",
+    "Facebook": "FB",
+    "Twitter / X": "X",
+    "TikTok": "TT",
+    "Threads": "TH",
+    "Pinterest": "PI",
+    "Other": "SOC",
+  };
+
+  const short     = platformShortMap[platform] || platform;
+  const baseTitle = r.Title || "(Social post)";
+  const label     = `[${short}] ${baseTitle}`;
+
+  // 👇 still using "linkedin" as the kind so colours/legend keep working
+  push(events, r.Planned, label, "linkedin", "LinkedIn", i, r.Link || null);
+});
   (plannerCache.Training||[]).forEach((r,i)=>
     push(
       events,
