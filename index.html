@@ -1532,12 +1532,12 @@ function toInputDate(s){
   const d = new Date(str);
   return isNaN(d) ? "" : d.toISOString().slice(0,10);
 }
-function toSheetDate(iso){
-  if (!iso) return "";
-  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return iso;
-  const [, y, mm, dd] = m;
-  return `${dd}/${mm}/${y}`;
+function toSheetDate(value) {
+  if (!value) return "";
+
+  // Always normalise through toInputDate so we get a clean YYYY-MM-DD string
+  const iso = toInputDate(value);
+  return iso || "";
 }
 function parseDateFlexible(s){
   const iso = toInputDate(s);
